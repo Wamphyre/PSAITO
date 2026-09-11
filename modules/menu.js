@@ -1,0 +1,130 @@
+// 2026-09-11 menu.js — panel de payloads sobre el userland de mansoor0x.
+// Al completarse el exploit (onBridgeReady) se habilita: lista de payloads
+// conocidas + nombre custom + URL arbitraria, se sirven por HTTP desde el
+// MISMO origen (pb= base, por defecto "payloads/") y se evaluan en el mismo
+// contexto JS que ya tiene la API del bridge (malloc/syscall/read/write/log).
+"use strict";
+(function (global) {
+    const QP = new URLSearchParams(location.search);
+    let pb = QP.get("pb") || "payloads/";
+    if (!pb.endsWith("/")) pb += "/";
+
+    // [PSAITO] payload por defecto tras el exploit: aio_reach (gating AIO).
+    // ?auto=<archivo.js> lo cambia; ?auto=0 lo desactiva.
+    const DEF_PAYLOAD = "aio_reach_1320.js";
+    let auto = QP.get("auto");
+    if (auto === null) auto = DEF_PAYLOAD;
+    let autoTimer = 0;
+
+    const KNOWN = [
+        "hello_1320.js",
+        "aio_reach_1320.js",
+        "osem_campaign_1320.js",
+        "osem2_1320.js",
+        "netcontrol_poc_1320.js",
+        "netctl5_variants_1320.js",
+        "devprobe_1320.js",
+        "fs_probe_1320.js",
+    ];
+
+    let css = document.createElement("style");
+    css.textContent =
+        "#pnl{position:fixed;right:8px;top:56px;width:340px;max-height:80vh;" +
+        "overflow:auto;background:#060a10;border:1px solid #0d1825;border-radius:6px;" +
+        "padding:10px;font-family:Consolas,monospace;font-size:11px;color:#c0d0e8;" +
+        "z-index:50;display:none}" +
+        "#pnl button{background:#0057e0;color:#fff;border:0;border-radius:4px;" +
+        "padding:6px 10px;font-weight:600;cursor:pointer;margin:2px}" +
+        "#pnl input{width:150px;background:#030508;color:#c0d0e8;" +
+        "border:1px solid #0d1825;border-radius:4px;padding:4px}" +
+        "#plg{background:#030508;border:1px solid #0d1825;border-radius:4px;" +
+        "height:180px;overflow:auto;white-space:pre-wrap;padding:6px;margin-top:6px}" +
+        "#pnl .h{color:#e8f0ff;font-weight:700;letter-spacing:.1em}";
+    document.head.appendChild(css);
+
+    const pnl = document.createElement("div");
+    pnl.id = "pnl";
+    pnl.innerHTML =
+        '<span class="h">PSAITO · PAYLOADS</span> ' +
+        '<span id="pmode">—</span><br>' +
+        '<select id="psel"></select> <input id="pcustom" placeholder="o archivo.js">' +
+        '<div><button id="prun">EJECUTAR</button>' +
+        '<button id="pstop" style="background:#552222">RESET</button></div>' +
+        'URL: <input id="purl" style="width:290px" placeholder="http://host/payload.js">' +
+        '<div><button id="purlrun" style="background:#00764f">RUN URL</button></div>' +
+        '<div id="plg">listo.</div>';
+    document.body.appendChild(pnl);
+
+    const sel = pnl.querySelector("#psel");
+    if (auto && auto !== "0" && KNOWN.indexOf(auto) < 0)
+        KNOWN.unshift(auto);
+    for (const k of KNOWN) {
+        const o = document.createElement("option");
+        o.textContent = k;
+        sel.appendChild(o);
+        if (k === auto) sel.value = k;
+    }
+
+    function glog(s) {
+        const d = pnl.querySelector("#plg");
+        d.textContent = (d.textContent + "\n" + s).split("\n").slice(-200).join("\n");
+        d.scrollTop = d.scrollHeight;
+    }
+    function fetchText(url, cb) {
+        try {
+            const x = new XMLHttpRequest();
+            x.open("GET", url, true);
+            x.onload = () => cb(x.status === 200 ? null : "http" + x.status, x.responseText);
+            x.onerror = () => cb("network", null);
+            x.send();
+        } catch (e) { cb("throw:" + e, null); }
+    }
+    function runSource(name, src) {
+        glog("== run " + name + " (" + src.length + "B) ==");
+        try {
+            (0, eval)(src);
+            glog("== fin " + name + " (sin throw sincrono) ==");
+        } catch (e) {
+            glog("!! ERROR " + name + ": " + (e && e.message || e));
+        }
+    }
+    function runFile(name) {
+        fetchText(pb + encodeURIComponent(name), (err, src) => {
+            if (err) { glog("!! fetch " + name + ": " + err); return; }
+            runSource(name, src);
+        });
+    }
+    function runNamed() {
+        runFile((pnl.querySelector("#pcustom").value.trim()) || sel.value);
+    }
+
+
+    pnl.querySelector("#prun").addEventListener("click", runNamed);
+    pnl.querySelector("#purlrun").addEventListener("click", () => {
+        const u = pnl.querySelector("#purl").value.trim();
+        if (!u) return;
+        fetchText(u, (err, src) => {
+            if (err) { glog("!! fetch url: " + err); return; }
+            runSource(u.split("/").pop(), src);
+        });
+    });
+    pnl.querySelector("#pstop").addEventListener("click", () => {
+        if (autoTimer) { clearTimeout(autoTimer); autoTimer = 0; }
+        pnl.querySelector("#plg").textContent = "reset (recargar para re-explotar).";
+        try { sessionStorage.removeItem("userland-loader-handoff-1:passed"); } catch (e) {}
+        setTimeout(() => location.reload(), 200);
+    });
+
+    global.onBridgeReady = function (ps5) {
+        pnl.style.display = "block";
+        pnl.querySelector("#pmode").textContent =
+            "fw " + ps5.fw + " · modo " + ps5.mode +
+            (ps5.mode === "ROP" ? "" : " (! syscall no-op)");
+        glog("bridge listo. heap=arena+0x2000..0x8000 pb=" + pb);
+        if (ps5.notes && ps5.notes.length) glog("notas: " + ps5.notes.join(" | "));
+        if (auto && auto !== "0") {
+            glog("auto-run en 1.5s: " + auto + "  (?auto=0 desactiva)");
+            autoTimer = setTimeout(() => runFile(auto), 1500);
+        }
+    };
+})(window);
