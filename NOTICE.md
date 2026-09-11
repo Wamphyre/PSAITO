@@ -7,20 +7,20 @@ creditos (GUI y este aviso).
 Directorio `USERLAND/` basado en el POC publico de **mansoor0x**:
 <https://github.com/mansoor0x/POC> (commit `c38fc5670dda8a750381091c4ad808fe9ad60480`, main, 2026).
 
-- El repositorio upstream **no declara licencia** (solo README). Copia para
-  **investigacion privada en consola propia**; no redistribuir como propio ni
-  empaquetar para terceros.
+- El repositorio upstream **no declara licencia** (solo README). Este proyecto es
+  **experimental, educativo y de investigacion**, uso privado en consola propia;
+  no redistribuir el POC como propio ni empaquetarlo para terceros.
 - Autoria del exploit WebKit (WebKit SSV/type-confusion + primitiva notify):
   mansoor0x. Los unicos offsets/constantes verificados en consola por el autor
   upstream parecen ser los de la familia 11.xx/12.xx (ver notas
   `offline-verified-fw=11.60` en el codigo); el resto es interpolacion.
 
-## Modificaciones nuestras (Jailbreak)
+## Modificaciones nuestras (PSAITO)
 
-Sobre el baseline anterior (marcadas en el codigo con `Mods Jailbreak` /
+Sobre el baseline anterior (marcadas en el codigo con `Mods PSAITO` /
 fechas 2026-09-11):
 
-- `modules/exploit.js`: arena 0x1000 -> 0x10000; conservar la ventana RW
+- `modules/exploit.js` (motor de investigacion WebKit): arena 0x1000 -> 0x10000; conservar la ventana RW
   (carrier `candidate`, `rwView`) tras el SUCCESS en vez de destruirla;
   handoff `window.__PS5_CTX` + callback `globalThis.onUserland()`.
 - `modules/bridge.js` (nuevo): API compatible con el loader Y2JB sobre las
@@ -31,7 +31,8 @@ fechas 2026-09-11):
   arbitraria, `?pb=` configurable), log en pantalla.
 - Rebranding GUI a PSAITO (marca wamphyre, credito mansoor0x visible); sw.js de
   rutas relativas para GitHub Pages.
-- `exploit.html` / `index.html` / `sw.js`: carga bridge+menu, `pb` param,
+- Avisos de proyecto experimental/educativo en README y GUI.
+- `runtime.html` (antes exploit.html) / `index.html` / `sw.js`: carga bridge+menu, `pb` param,
   no-cache de `/payloads/` y `/log/`.
 - `sim/`: simulador Node del entorno post-handoff (mini-CPU x86 + kernel
   fake ORBIS) para probar bridge y payloads sin consola.

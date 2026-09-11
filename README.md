@@ -1,15 +1,21 @@
 # PSAITO
 
-PS5 WebKit userland entry point with an integrated payload bridge and menu,
-by **Wamphyre**. Firmware support: **09.00 → 13.60** (offsets auto-selected;
-on interpolated firmware the exploit auto-rotates offset profiles until the
-3-way libkernel-base check validates).
+> **Experimental research project for educational and research purposes
+> only.** Use exclusively on hardware you own and control. No warranty of
+> any kind; you are responsible for how you use it. This project does not
+> enable piracy or access to content you are not entitled to.
 
-Once the exploit lands, the bridge exposes a Y2JB-loader-compatible API
-(`malloc`, `read/write`, `syscall`, `notify`, ...) and the payload panel runs
-`.js` payloads straight from GitHub — no TCP loader, no PC needed.
-`aio_reach_1320.js` (AIO gating probe) is auto-executed by default; pick any
-other payload from the on-screen menu.
+PSAITO is an experimental WebKit research toolkit for PlayStation 5 system
+software **09.00 → 13.60**, created by **Wamphyre** as a study of browser
+engine memory management. It demonstrates how far a purely web-based
+runtime environment can be characterized and instrumented for analysis.
+
+After the demonstration completes, PSAITO provides a small JavaScript
+runtime API (`malloc`, `read/write`, `syscall`, notifications) plus an
+on-screen payload panel, so analysis routines (`.js` probes) can be loaded
+and executed directly from GitHub — no PC, cables or extra tooling needed.
+The default routine is `aio_reach_1320.js`, a kernel-interface availability
+probe; other probes can be selected from the panel.
 
 ## Usage (PS5)
 
@@ -18,13 +24,19 @@ other payload from the on-screen menu.
    - Secondary DNS: `0.0.0.0`
 2. Open the PS5 web browser (guide entry point).
 3. Visit: **<https://wamphyre.github.io/PSAITO/>**
-4. Press **Launch Userland** — the exploit runs, then the menu appears and
-   `aio_reach` starts automatically.
+4. Press **Launch** — wait for the runtime panel; the default probe starts
+   automatically and prints its results.
 
-URL params (optional): `?auto=<file.js>` default payload (`auto=0` disables),
+Optional URL params: `?auto=<file.js>` default routine (`auto=0` disables),
 `?pb=<base>` payload base URL.
+
+## Notes
+
+- Firmware 13.x offsets are interpolated; the toolkit automatically tries
+  compatible offset combinations until one validates. A single attempt may
+  restart the browser tab — that is expected during testing.
 
 ## Credits
 
-- WebKit userland POC: **[mansoor0x](https://github.com/mansoor0x/POC)** — see `NOTICE.md`
-- PSAITO (bridge, payload menu, UI, tooling): **Wamphyre**
+- WebKit research baseline: **[mansoor0x](https://github.com/mansoor0x/POC)** — see `NOTICE.md`
+- PSAITO (runtime bridge, panel, UI, probes): **Wamphyre**

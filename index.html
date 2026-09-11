@@ -334,8 +334,8 @@ body::after{
         <span class="v ok">09.00 → 13.60</span>
       </div>
       <div class="info-row">
-        <span class="k">exploit</span>
-        <span class="v ok">WebKit heap — renderer notify</span>
+        <span class="k">runtime</span>
+        <span class="v ok">WebKit research PoC — runtime notify</span>
       </div>
       <div class="info-row">
         <span class="k">cache</span>
@@ -344,14 +344,15 @@ body::after{
     </div>
 
     <button id="btn" class="disabled">
-      ▶ Launch Userland
+      ▶ Launch
       <span class="arrow">↗</span>
     </button>
     <div id="msg" class="loading">Loading offsets…</div>
   </div>
 
   <div id="foot">
-    <b>PSAITO</b> by <b>wamphyre</b> &bull; based on the WebKit userland POC by <b>mansoor0x</b> &bull; 2026
+    <b>PSAITO</b> by <b>wamphyre</b> &bull; experimental project for educational
+    &amp; research use &bull; WebKit research baseline by <b>mansoor0x</b> &bull; 2026
   </div>
 </div>
 
@@ -414,7 +415,7 @@ $("btn").addEventListener("click", () => {
   q.set("ers", join(p => p.ers)); q.set("ere", join(p => p.ere));
   const pb = new URLSearchParams(location.search).get("pb");
   if (pb) q.set("pb", pb);
-  location.href = "exploit.html?" + q.toString();
+  location.href = "runtime.html?" + q.toString();
 });
 
 // ── Service Worker

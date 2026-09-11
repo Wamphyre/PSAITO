@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>PSAITO · Exploit</title>
+<title>PSAITO · Runtime</title>
 <style>
 :root{
   --bg:    #030508;
@@ -227,7 +227,7 @@ body::before{content:"";position:fixed;inset:0;
 
 <div id="topbar">
   <div class="tb-l">
-    <span class="tb-brand"><b>PSAITO</b> · wamphyre</span>
+    <span class="tb-brand"><b>PSAITO</b> · research · wamphyre</span>
     <span id="fw-label">FW ??.??</span>
   </div>
   <div class="tb-r">
@@ -261,11 +261,11 @@ body::before{content:"";position:fixed;inset:0;
 
 <div id="banner"></div>
 
-<!-- Bridge + menu (Jailbreak): API de payloads y panel, previos al exploit -->
+<!-- Runtime bridge + payload panel: API de análisis y panel de sondas -->
 <script src="modules/bridge.js"></script>
 <script src="modules/menu.js"></script>
 
-<!-- Exploit logic — loaded as regular script so it can access DOM directly -->
+<!-- Runtime logic — loaded as regular script so it can access DOM directly -->
 <script src="modules/exploit.js"></script>
 
 <script>
