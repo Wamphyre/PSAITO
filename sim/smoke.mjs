@@ -10,7 +10,7 @@ import { fileURLToPath } from "node:url";
 import * as F from "./fakeps5.mjs";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
-const DIR = path.resolve(HERE, "../../DEMO/payloads");
+const DIR = path.resolve(HERE, "../payloads");
 const TO = Number((process.argv.find((a) => a.startsWith("--timeout=")) || "").split("=")[1]) || 4000;
 const ONLY = (process.argv.find((a) => a.startsWith("--only=")) || "").slice(7)
     .split(",").map((s) => s.trim()).filter(Boolean);

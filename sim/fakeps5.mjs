@@ -9,7 +9,7 @@ import url from "node:url";
 import vm from "node:vm";
 
 const HERE = path.dirname(url.fileURLToPath(import.meta.url));
-const PAYLOADS = path.resolve(HERE, "../../DEMO/payloads");
+const PAYLOADS = path.resolve(HERE, "../payloads");
 const BRIDGE = path.resolve(HERE, "../modules/bridge.js");
 const MENU = path.resolve(HERE, "../modules/menu.js");
 
@@ -34,7 +34,7 @@ const M = {
 };
 
 // ---------- layout de módulos ----------
-const LIBK = 0x8100000000n;   // base libkernel (texto 0x44000)
+const LIBK = 0x810000000n;    // base libkernel (texto 0x44000)
 const ARENA = 0x8012340000n;
 const COLLCELL = 0x8011000240n;
 const ICU_RET = LIBK + 0x21abcn;          // "reingreso ICU" tras la cadena
@@ -292,16 +292,20 @@ export function bootSim() {
         querySelector: mkEl("qs"), head: mkEl("head"), body: mkEl("body"),
     };
     sandbox.XMLHttpRequest = class {
-        open(m, u) { this.u = u; }
-        send() {
+        open(m, u) { this.m = m; this.u = u; }
+        setRequestHeader() {}
+        send(body) {
             const u = this.u;
-            if (u.startsWith("log/")) {
-                const line = decodeURIComponent(u.slice(4));
+            // log remoto unificado: POST a http://<host>:8080/log o ruta log/
+            if (/\/log\/?$/.test(u) || u.startsWith("log/")) {
+                const line = body !== undefined ? String(body) : decodeURIComponent(u.slice(4));
                 out.pclog.push(line);
                 console.log("  [PS5→PC-LOG] " + line);
                 this.status = 200; this.responseText = "";
-            } else if (u.startsWith("payloads/")) {
-                const f = path.join(PAYLOADS, u.slice("payloads/".length));
+            } else if (u.startsWith("payloads/") || /\/payloads\//.test(u)) {
+                const rel = u.startsWith("payloads/") ? u.slice("payloads/".length)
+                    : u.slice(u.indexOf("/payloads/") + "/payloads/".length);
+                const f = path.join(PAYLOADS, rel);
                 this.status = fs.existsSync(f) ? 200 : 404;
                 this.responseText = this.status === 200 ? fs.readFileSync(f, "utf8") : "";
             } else { this.status = 404; this.responseText = ""; }

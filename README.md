@@ -51,11 +51,15 @@ itself (the PS5 loads it over the system browser).
 ### 1. Remote log (recommended; the on-screen log is lossy)
 
 The exploit and the bridge POST each log line to a `log_server.py` on your PC.
-Run it before launching:
+Run it before launching (no dependencies, Python 3 stdlib only):
 
 ```
-python DEMO/log_server.py       # listens on 0.0.0.0:8080, prints lines
+python3 DEMO/log_server.py      # listens on 0.0.0.0:8080, prints timestamped lines
+python3 DEMO/log_server.py 9000 # optional: alternate port
 ```
+
+Allow inbound TCP 8080 through your PC firewall, and make sure the PC and the
+PS5 are on the same LAN.
 
 The default endpoint is `http://<page-host>:8080/log`, which resolves to the
 PC only if the PC is the DNS/page host. **With GitHub Pages the page host is
