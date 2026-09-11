@@ -415,6 +415,11 @@ $("btn").addEventListener("click", () => {
   q.set("ers", join(p => p.ers)); q.set("ere", join(p => p.ere));
   const pb = new URLSearchParams(location.search).get("pb");
   if (pb) q.set("pb", pb);
+  // [Mods consola] propaga el payload de auto-arranque y el logserver al runtime
+  const auto = new URLSearchParams(location.search).get("auto");
+  if (auto !== null) q.set("auto", auto);
+  const logserver = new URLSearchParams(location.search).get("logserver");
+  if (logserver) q.set("logserver", logserver);
   location.href = "runtime.html?" + q.toString();
 });
 

