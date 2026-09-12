@@ -14,8 +14,8 @@ After the demonstration completes, PSAITO provides a small JavaScript
 runtime API (`malloc`, `read/write`, `syscall`, notifications) plus an
 on-screen payload panel, so analysis routines (`.js` probes) can be loaded
 and executed directly from GitHub — no PC, cables or extra tooling needed.
-The default routine is `aio_reach_1320.js`, a kernel-interface availability
-probe; other probes can be selected from the panel.
+The default routine is `bagagwa_uaf_1320.js` (the BAGAGWA `aio_multi_wait`
+mode 0 UAF); other probes can be selected from the panel.
 
 ## Usage (PS5)
 
@@ -31,7 +31,7 @@ Optional URL params (all of them propagate from `index.html` to `runtime.html`):
 append them to <https://wamphyre.github.io/PSAITO/>, e.g.
 `https://wamphyre.github.io/PSAITO/?max=3&rd=3000&auto=hello_1320.js`.
 - `?auto=<file.js>` — auto-run routine (`auto=0` disables; default
-  `aio_reach_1320.js`)
+  `bagagwa_uaf_1320.js`)
 - `?pb=<base>` — payload base URL (default same-origin `payloads/`)
 - `?logserver=<url>` — remote log endpoint (see **Console log** below)
 - `?rop=0` — force bridge **DIRECT** mode (skip libkernel .text gadget scan)
@@ -126,18 +126,23 @@ Expected: `runtime.html` shows `*** SUCCESS ***`, the panel appears with
 
 ### 3. Second run: the real payload
 
-Once the canary passes, run with the default (`aio_reach_1320.js`), which
-gates the BAGAGWA AIO chain (research note `RESEARCH/bagagwa-aio-multi-wait-uaf-2026-09-06.md`,
-not shipped in this repository):
+PSAITO is **two sequential stages**: (1) the WebKit exploit in `exploit.js`
+gets the browser-process RW primitive and publishes `window.__PS5_CTX` +
+`onUserland()`; (2) the payload runs inside that runtime and uses `syscall()`.
+A payload **cannot run before stage 1 succeeds** — `onBridgeReady` (and the
+auto-run 1.5 s later) only fires after `*** SUCCESS ***`.
+
+Once the canary passes, the default (`bagagwa_uaf_1320.js`) fires the BAGAGWA
+`aio_multi_wait` mode 0 UAF (see 3b). A lighter alternative to first confirm
+AIO reachability is `aio_reach_1320.js`:
 
 ```
-https://wamphyre.github.io/PSAITO/?log=1&logserver=http://<PC-IP>:8080/log&max=3&rd=3000
+https://wamphyre.github.io/PSAITO/?log=1&logserver=http://<PC-IP>:8080/log&max=3&rd=3000&auto=aio_reach_1320.js
 ```
 
 `aio_reach` prints `PASO` lines and a final `VEREDICTO: AIO VIVA` /
-`AIO MUERTA (todas ENOSYS/EX)`. **Do not expect an exploit result yet** — this
-is the reachability gate; if `AIO MUERTA`, the chain is dead from the Y2JB
-sandbox.
+`AIO MUERTA (todas ENOSYS/EX)`. If `AIO MUERTA`, the BAGAGWA chain is dead from
+the Y2JB sandbox and only the reachability result matters.
 
 ### 3b. BAGAGWA UAF (`bagagwa_uaf_1320.js`)
 

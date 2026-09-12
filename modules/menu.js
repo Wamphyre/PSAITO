@@ -9,9 +9,9 @@
     let pb = QP.get("pb") || "payloads/";
     if (!pb.endsWith("/")) pb += "/";
 
-    // [PSAITO] payload por defecto tras el exploit: aio_reach (gating AIO).
+    // [PSAITO] payload por defecto tras el exploit: Bagagwa UAF (aio_multi_wait mode 0).
     // ?auto=<archivo.js> lo cambia; ?auto=0 lo desactiva.
-    const DEF_PAYLOAD = "aio_reach_1320.js";
+    const DEF_PAYLOAD = "bagagwa_uaf_1320.js";
     let auto = QP.get("auto");
     if (auto === null) auto = DEF_PAYLOAD;
     let autoTimer = 0;
