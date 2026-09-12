@@ -40,7 +40,13 @@
         "border:1px solid #0d1825;border-radius:4px;padding:4px}" +
         "#plg{background:#030508;border:1px solid #0d1825;border-radius:4px;" +
         "height:180px;overflow:auto;white-space:pre-wrap;padding:6px;margin-top:6px}" +
-        "#pnl .h{color:#e8f0ff;font-weight:700;letter-spacing:.1em}";
+        "#pnl .h{color:#e8f0ff;font-weight:700;letter-spacing:.1em}" +
+        // Boton flotante de descarga: siempre visible aunque el panel se oculte
+        // o el exploit se cuelgue. Rescata el log en cualquier estado.
+        "#dlfab{position:fixed;right:8px;bottom:8px;z-index:60;" +
+        "background:#555f00;color:#fff;border:0;border-radius:4px;" +
+        "padding:8px 12px;font:600 11px Consolas,monospace;cursor:pointer;" +
+        "box-shadow:0 2px 10px rgba(0,0,0,.6)}";
     document.head.appendChild(css);
 
     const pnl = document.createElement("div");
@@ -51,12 +57,24 @@
         '<select id="psel"></select> <input id="pcustom" placeholder="o archivo.js">' +
         '<div><button id="prun">RUN</button>' +
         '<button id="pstop" style="background:#552222">RESET</button>' +
+        '<button id="pstop2" style="background:#7a1f1f">STOP</button>' +
         '<button id="plogdl" style="background:#555f00">DOWNLOAD LOG</button>' +
         '<button id="plogclr" style="background:#333">CLEAR</button></div>' +
         'URL: <input id="purl" style="width:290px" placeholder="http://host/payload.js">' +
         '<div><button id="purlrun" style="background:#00764f">RUN URL</button></div>' +
         '<div id="plg">ready.</div>';
     document.body.appendChild(pnl);
+    // El panel se muestra DESDE YA (no solo tras onBridgeReady): si el exploit
+    // entra en bucle de fallos o satura memoria, los botones de log siguen
+    // accesibles. Arranca en estado "waiting".
+    pnl.style.display = "block";
+    pnl.querySelector("#pmode").textContent = "waiting for bridge…";
+
+    // Boton flotante de rescate: descarga el log sin depender del panel.
+    const dlfab = document.createElement("button");
+    dlfab.id = "dlfab";
+    dlfab.textContent = "DOWNLOAD LOG";
+    document.body.appendChild(dlfab);
 
     const sel = pnl.querySelector("#psel");
     if (auto && auto !== "0" && KNOWN.indexOf(auto) < 0)
@@ -99,6 +117,42 @@
         if (logBuf.length > LOG_CAP) logBuf.splice(0, logBuf.length - LOG_CAP);
         persistLog();
     }
+
+    // El exploit escribe su propio log en #scr (screenLine), NO via log() del
+    // bridge. Sin capturarlo, el boton de descarga perderia justo el log de
+    // intentos/reintentos. Un observer copia cada cambio de #scr al buffer.
+    let scrLast = "";
+    function captureScr() {
+        try {
+            const scr = document.getElementById("scr");
+            if (!scr) return;
+            const txt = scr.textContent || "";
+            if (txt === scrLast) return;
+            // El bloque de #scr solo guarda las ultimas SCREEN_LINES lineas; se
+            // anaden al buffer las que sean nuevas respecto a lo ya visto.
+            if (scrLast && txt.startsWith(scrLast)) {
+                const delta = txt.slice(scrLast.length).replace(/^\n+/, "");
+                if (delta) logAll("[scr] " + delta);
+            } else if (!scrLast) {
+                const first = txt.replace(/^Waiting for exploit to start…\s*/, "").trim();
+                if (first) logAll("[scr] " + first);
+            } else {
+                logAll("[scr] " + txt.split("\n").slice(-1)[0]);
+            }
+            scrLast = txt;
+        } catch (e) {}
+    }
+    const SI = (typeof setInterval === "function") ? setInterval
+        : (typeof global.setInterval === "function" ? global.setInterval : null);
+    try {
+        const scrEl = document.getElementById("scr");
+        if (scrEl && window.MutationObserver) {
+            new MutationObserver(captureScr).observe(scrEl,
+                { childList: true, characterData: true, subtree: true });
+        } else if (SI) {
+            SI(captureScr, 1000);
+        }
+    } catch (e) { if (SI) SI(captureScr, 1000); }
     function glog(s) {
         logAll(s);
         const d = pnl.querySelector("#plg");
@@ -151,8 +205,21 @@
     }
 
 
+    function stopExploit() {
+        try {
+            if (typeof global.__psaitoStop === "function") {
+                global.__psaitoStop();
+                glog("!! exploit stopped by user (retry loop halted).");
+            } else {
+                glog("!! __psaitoStop not available (exploit not armed?).");
+            }
+        } catch (e) { glog("!! stop failed: " + e); }
+    }
+
     pnl.querySelector("#prun").addEventListener("click", runNamed);
     pnl.querySelector("#plogdl").addEventListener("click", downloadLog);
+    dlfab.addEventListener("click", downloadLog);
+    pnl.querySelector("#pstop2").addEventListener("click", stopExploit);
     pnl.querySelector("#plogclr").addEventListener("click", () => {
         logBuf.length = 0;
         try { localStorage.removeItem(STORE_KEY); } catch (e) {}

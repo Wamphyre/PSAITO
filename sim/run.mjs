@@ -22,10 +22,13 @@ check("boot: getpid via ROP = 4242",
 
 // ---------- menu (DOM stub) ----------
 const els = Object.values(sb.__elems);
-check("menu: panel habilitado por onBridgeReady",
+check("menu: panel visible", 
     els.some((e) => e.style && e.style.display === "block"));
 const modeEl = els.find((e) => String(e.textContent).includes("fw 13.20"));
 check("menu: badge modo visible", !!modeEl, modeEl ? modeEl.textContent.trim() : "-");
+check("menu: rescue DOWNLOAD LOG button exists",
+    els.some((e) => e.id === "dlfab"), "dlfab");
+check("menu: STOP button wired", !!sb.__psaitoAppend, "append hook");
 
 // ---------- payload 1: hello (canary de API) ----------
 console.log("\n-- hello_1320.js (canary API loader) --");

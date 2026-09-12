@@ -47,8 +47,12 @@ append them to <https://wamphyre.github.io/PSAITO/>, e.g.
 
 The bridge **and** the payloads write to the on-screen panel (`#plg`), to the
 main runtime log (`#scr`) and to a full in-memory buffer that is not truncated.
-The panel exposes `RUN`, `RESET`, `DOWNLOAD LOG` and `CLEAR`; the two log
-buttons are:
+The panel is **visible from the start** (state `waiting for bridge…`) and does
+not depend on the exploit succeeding, so the log controls stay reachable even
+if the exploit loops on memory failures. It exposes `RUN`, `RESET`, `STOP`,
+`DOWNLOAD LOG` and `CLEAR`; plus a fixed **DOWNLOAD LOG** button at the bottom
+right of the screen (independent of the panel). `STOP` halts the retry loop
+without reloading.
 
 - **DOWNLOAD LOG** — downloads the whole buffer as `psaito_log_<timestamp>.txt`
   (via `Blob` + `a[download]`); lands in the console's download area.
@@ -56,7 +60,8 @@ buttons are:
 
 The buffer is also mirrored to `localStorage`, so it survives a page/app restart
 (Y2JB startup may reload the tab). On reopen the previous log is replayed at the
-top of the panel.
+top of the panel. The exploit's own log (`#scr`) is captured into the same
+buffer via a MutationObserver.
 
 Writing the log to a **USB drive** is not possible from the browser sandbox:
 `payloads/usb_probe_1320.js` probes 24 USB/mount paths (`/mnt/usb*`, `/media`,

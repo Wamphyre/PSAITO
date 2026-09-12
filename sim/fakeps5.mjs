@@ -278,6 +278,18 @@ export function bootSim() {
     sandbox.location = { search: "?go=1&pb=payloads/" };
     sandbox.navigator = { userAgent: "Mozilla/5.0 (PlayStation; PlayStation 5/2.26) AppleWebKit/605.1.15 Version/13.20 PlayStation 5/13.20" };
     sandbox.sessionStorage = { getItem: () => null, setItem() {}, removeItem() {} };
+    const lsStore = {};
+    sandbox.localStorage = {
+        getItem: (k) => (k in lsStore ? lsStore[k] : null),
+        setItem: (k, v) => { lsStore[k] = String(v); },
+        removeItem: (k) => { delete lsStore[k]; },
+    };
+    sandbox.__lsStore = lsStore;
+    sandbox.setInterval = () => 0;
+    sandbox.clearInterval = () => {};
+    sandbox.Blob = class { constructor(parts) { this.parts = parts; } };
+    sandbox.MutationObserver = class { observe() {} disconnect() {} };
+    sandbox.URL = { createObjectURL: () => "blob:sim", revokeObjectURL: () => {} };
     const elems = {};
     const mkEl = (id) => elems[id] || (elems[id] = {
         id, textContent: "", value: "", className: "", innerHTML: "",
