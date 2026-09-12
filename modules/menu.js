@@ -19,6 +19,7 @@
     const KNOWN = [
         "hello_1320.js",
         "aio_reach_1320.js",
+        "bagagwa_uaf_1320.js",
         "osem_campaign_1320.js",
         "osem2_1320.js",
         "netcontrol_poc_1320.js",

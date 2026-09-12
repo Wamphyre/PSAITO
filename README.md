@@ -139,6 +139,25 @@ https://wamphyre.github.io/PSAITO/?log=1&logserver=http://<PC-IP>:8080/log&max=3
 is the reachability gate; if `AIO MUERTA`, the chain is dead from the Y2JB
 sandbox.
 
+### 3b. BAGAGWA multi-chain (UAF, `bagagwa_uaf_1320.js`)
+
+Once AIO is reachable, `bagagwa_uaf_1320.js` implements the deterministic
+`aio_multi_wait` **mode 0** UAF (`syscall 0x297` / 663): with `num >= 2` it links
+the same waiter node onto N request lists, overwriting `node->owner`; cleanup
+unlinks it only from the last, so the others keep `req->waiters` pointing to
+freed memory. The waker is the write primitive (`[r15+0x20]` 32-bit write,
+`[r15]`/`[r15+8]` arbitrary 32-bit decrements, `mtx_lock` on `[r15+0x10]`).
+Then it reclaims the freed 128 zone with `osem_create` (obj `0x60`, refcount at
+`obj+0x54`) and uses `get_aio_debug_request_info` (`0x2D7`) as the leak.
+
+**This payload is destructive**: phases 3+ can hang or panic the console. It
+logs the last `W`/`log` line before any fault, so run it with a low attempt
+ceiling and read the verdict in the panel/log.
+
+```
+https://wamphyre.github.io/PSAITO/?log=1&logserver=http://<PC-IP>:8080/log&auto=bagagwa_uaf_1320.js&max=1
+```
+
 ### 4. Offset profiles (13.20)
 
 `offsets.mjs` marks 13.20 exact and rotates **two** GOT profiles per attempt:
