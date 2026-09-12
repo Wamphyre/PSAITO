@@ -61,6 +61,22 @@ check("aio muerta: GATE CERRADA por SAR", joined2.indexOf("CERRADA por SAR") >= 
 check("aio muerta: VEREDICTO AIO MUERTA", joined2.indexOf("AIO MUERTA") >= 0,
     (out.notifs[out.notifs.length - 1] || "").slice(0, 90));
 
+// ---------- bridge: recuperacion de base desde candidata ----------
+console.log("\n-- bridge: base fuera de banda + candidata valida --");
+const sb2 = bootSim();
+{
+    const c = sb2.__PS5_CTX;
+    c.libkernelBase = 0xDEAD;                       // fuera de banda
+    c.kernelBaseCandidates = { getpid: 0x810000000, close: 0x123, error: 0x456,
+        getpidPtr: 0, closePtr: 0, errorPtr: 0 };
+    sb2.__PS5_CTX = c;
+    sb2.onUserland();
+}
+check("bridge: recupera base getpid y entra en ROP",
+    sb2.PS5.mode === "ROP", sb2.PS5.mode + " notes=" + sb2.PS5.notes.join(";"));
+check("bridge: nota kbase-recovered-from:getpid",
+    sb2.PS5.notes.some((n) => String(n).startsWith("kbase-recovered-from:getpid")));
+
 // ---------- resumen ----------
 const fails = results.filter((r) => !r.pass);
 console.log("\n=== RESULTADO: " + (results.length - fails.length) + "/" + results.length + " OK ===");

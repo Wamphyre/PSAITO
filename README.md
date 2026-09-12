@@ -192,6 +192,17 @@ Two safety nets were added for console:
   the process. `PS5.notes` will show `rop-probe-threw:...`.
 - `?rop=0` forces DIRECT unconditionally.
 
+Additionally, if the exploit publishes an out-of-band `libkernelBase` (the
+common 13.x symptom when interpolated GOT offsets fail the 3-way check), the
+bridge now logs the per-import candidates (`kbase-candidates: getpid=...,close=...`)
+and **recovers** from whichever candidate lies in band and is page-aligned
+(`kbase-recovered-from:getpid`), so a single wrong offset no longer forces
+DIRECT. If none is valid, the panel shows a `DIAG DIRECT MODE` block with the
+raw `webkitBase` / `libkernelBase` values and the reason.
+
+When DIRECT, `syscall()` throws and syscall-based payloads (BAGAGWA, AIO) cannot
+fire — only `notify`/`nativeCall` probes work.
+
 With GitHub Pages the page origin is `github.io`, and `exploit.js` disables
 remote logging by default in that case. **Always pass `?log=1` together with
 `?logserver=...`** so the exploit's own `mark()` lines reach the PC:

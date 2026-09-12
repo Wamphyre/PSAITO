@@ -261,6 +261,16 @@
             (ps5.mode === "ROP" ? "" : " (! syscall no-op)");
         glog("bridge ready. heap=arena+0x2000..0x8000 pb=" + pb);
         if (ps5.notes && ps5.notes.length) glog("notes: " + ps5.notes.join(" | "));
+        if (ps5.mode !== "ROP") {
+            glog("============ DIAG DIRECT MODE ============");
+            glog("syscall() unavailable -> bagagwa/aio cannot fire.");
+            glog("webkitBase = " + (ps5.webkitBase === null ? "null" : "0x" + Number(ps5.webkitBase).toString(16)));
+            glog("libkernel  = " + (ps5.libkernelBase === null ? "null" : "0x" + Number(ps5.libkernelBase).toString(16)));
+            glog("notes      = " + (ps5.notes && ps5.notes.length ? ps5.notes.join(" | ") : "(none)"));
+            glog("most likely: 13.x offsets (gps/cls/ers) did not validate");
+            glog("=> rop-no-libkernel-base. Both offset profiles were tried.");
+            glog("=========================================");
+        }
         replaySaved();
         if (auto && auto !== "0") {
             glog("auto-run in 1.5s: " + auto + "  (?auto=0 disables)");

