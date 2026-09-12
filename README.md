@@ -23,12 +23,13 @@ probe; other probes can be selected from the panel.
    - Primary DNS: `62.210.38.117`
    - Secondary DNS: `0.0.0.0`
 2. Open the PS5 web browser (guide entry point).
-3. Visit the toolkit URL (own GitHub Pages deployment, e.g.
-   `<https://<user>.github.io/<repo>/`).
+3. Visit the toolkit URL: **<https://wamphyre.github.io/PSAITO/>**
 4. Press **Launch** — wait for the runtime panel; the default probe starts
    automatically and prints its results.
 
 Optional URL params (all of them propagate from `index.html` to `runtime.html`):
+append them to <https://wamphyre.github.io/PSAITO/>, e.g.
+`https://wamphyre.github.io/PSAITO/?max=3&rd=3000&auto=hello_1320.js`.
 - `?auto=<file.js>` — auto-run routine (`auto=0` disables; default
   `aio_reach_1320.js`)
 - `?pb=<base>` — payload base URL (default same-origin `payloads/`)
@@ -106,7 +107,7 @@ Launch with the canary as the auto-run to confirm the WebKit exploit completes
 and the bridge boots:
 
 ```
-https://<user>.github.io/<repo>/?logserver=http://<PC-IP>:8080/log&auto=hello_1320.js
+https://wamphyre.github.io/PSAITO/?log=1&logserver=http://<PC-IP>:8080/log&auto=hello_1320.js&max=3&rd=3000
 ```
 
 Expected: `runtime.html` shows `*** SUCCESS ***`, the panel appears with
@@ -120,7 +121,7 @@ gates the BAGAGWA AIO chain (research note `RESEARCH/bagagwa-aio-multi-wait-uaf-
 not shipped in this repository):
 
 ```
-https://<user>.github.io/<repo>/?logserver=http://<PC-IP>:8080/log
+https://wamphyre.github.io/PSAITO/?log=1&logserver=http://<PC-IP>:8080/log&max=3&rd=3000
 ```
 
 `aio_reach` prints `PASO` lines and a final `VEREDICTO: AIO VIVA` /
