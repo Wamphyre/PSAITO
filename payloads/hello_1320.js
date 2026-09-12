@@ -2,11 +2,11 @@
 // 2026-08-27 -- 3 logs + getpid: si el loader evalua, se reciben los 3 logs.
 
 (async () => {
-    await log("[canary] hello: el loader llega a eval()");
+    await log("[canary] hello: loader reached eval()");
     try {
         const pid = syscall(SYSCALL.getpid);
         await log("[canary] getpid ok = " + toHex(pid));
-        await log("[canary] FIN - payload completó sin crash");
+        await log("[canary] DONE - payload completed without crash");
     } catch (e) {
         await log("[canary] ERROR en getpid: " + e);
     }

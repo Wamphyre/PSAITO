@@ -49,13 +49,13 @@
         '<span class="h">PSAITO · PAYLOADS</span> ' +
         '<span id="pmode">—</span><br>' +
         '<select id="psel"></select> <input id="pcustom" placeholder="o archivo.js">' +
-        '<div><button id="prun">EJECUTAR</button>' +
+        '<div><button id="prun">RUN</button>' +
         '<button id="pstop" style="background:#552222">RESET</button>' +
-        '<button id="plogdl" style="background:#555f00">DESCARGAR LOG</button>' +
-        '<button id="plogclr" style="background:#333">LIMPIAR</button></div>' +
+        '<button id="plogdl" style="background:#555f00">DOWNLOAD LOG</button>' +
+        '<button id="plogclr" style="background:#333">CLEAR</button></div>' +
         'URL: <input id="purl" style="width:290px" placeholder="http://host/payload.js">' +
         '<div><button id="purlrun" style="background:#00764f">RUN URL</button></div>' +
-        '<div id="plg">listo.</div>';
+        '<div id="plg">ready.</div>';
     document.body.appendChild(pnl);
 
     const sel = pnl.querySelector("#psel");
@@ -119,8 +119,8 @@
             document.body.appendChild(a);
             a.click();
             setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 5000);
-            glog("== log descargado: " + name + " ==");
-        } catch (e) { glog("!! descarga no soportada: " + e); }
+            glog("== log downloaded: " + name + " ==");
+        } catch (e) { glog("!! download not supported: " + e); }
     }
     function fetchText(url, cb) {
         try {
@@ -135,7 +135,7 @@
         glog("== run " + name + " (" + src.length + "B) ==");
         try {
             (0, eval)(src);
-            glog("== fin " + name + " (sin throw sincrono) ==");
+            glog("== end " + name + " (no synchronous throw) ==");
         } catch (e) {
             glog("!! ERROR " + name + ": " + (e && e.message || e));
         }
@@ -156,7 +156,7 @@
     pnl.querySelector("#plogclr").addEventListener("click", () => {
         logBuf.length = 0;
         try { localStorage.removeItem(STORE_KEY); } catch (e) {}
-        pnl.querySelector("#plg").textContent = "log limpiado.";
+        pnl.querySelector("#plg").textContent = "log cleared.";
     });
     pnl.querySelector("#purlrun").addEventListener("click", () => {
         const u = pnl.querySelector("#purl").value.trim();
@@ -168,46 +168,46 @@
     });
     pnl.querySelector("#pstop").addEventListener("click", () => {
         if (autoTimer) { clearTimeout(autoTimer); autoTimer = 0; }
-        pnl.querySelector("#plg").textContent = "reset (recargar para re-explotar).";
+        pnl.querySelector("#plg").textContent = "reset (reload to re-exploit).";
         try { sessionStorage.removeItem("userland-loader-handoff-1:passed"); } catch (e) {}
         setTimeout(() => location.reload(), 200);
     });
 
-    // Vuelca al panel el log persistido de una ejecucion anterior (si lo hay).
+    // Replay the persisted log from a previous run, if any.
     function replaySaved() {
         if (!logBuf.length) return;
         const d = pnl.querySelector("#plg");
-        if (d.textContent.indexOf("--- log de ejecucion anterior ---") >= 0) return;
-        d.textContent = "--- log de ejecucion anterior ---\n"
-            + logBuf.join("\n") + "\n--- fin log anterior ---";
+        if (d.textContent.indexOf("--- previous run log ---") >= 0) return;
+        d.textContent = "--- previous run log ---\n"
+            + logBuf.join("\n") + "\n--- end previous log ---";
         d.scrollTop = d.scrollHeight;
     }
 
     global.onBridgeReady = function (ps5) {
         pnl.style.display = "block";
         pnl.querySelector("#pmode").textContent =
-            "fw " + ps5.fw + " · modo " + ps5.mode +
+            "fw " + ps5.fw + " · mode " + ps5.mode +
             (ps5.mode === "ROP" ? "" : " (! syscall no-op)");
-        glog("bridge listo. heap=arena+0x2000..0x8000 pb=" + pb);
-        if (ps5.notes && ps5.notes.length) glog("notas: " + ps5.notes.join(" | "));
+        glog("bridge ready. heap=arena+0x2000..0x8000 pb=" + pb);
+        if (ps5.notes && ps5.notes.length) glog("notes: " + ps5.notes.join(" | "));
         replaySaved();
         if (auto && auto !== "0") {
-            glog("auto-run en 1.5s: " + auto + "  (?auto=0 desactiva)");
+            glog("auto-run in 1.5s: " + auto + "  (?auto=0 disables)");
             autoTimer = setTimeout(() => runFile(auto), 1500);
         }
     };
 
-    // [Mods consola] Watchdog: si el exploit no alcanza SUCCESS (onBridgeReady),
-    // el panel queda oculto y no hay forma de diagnosticar desde la consola.
-    // A los 60s mostramos el estado real y una pista.
+    // [Mods console] Watchdog: if the exploit never reaches SUCCESS
+    // (onBridgeReady), the panel stays hidden and there is no way to diagnose
+    // from the console. After 60s show the real state and a hint.
     setTimeout(function () {
         if (!global.PS5 || !global.PS5.ready) {
             pnl.style.display = "block";
-            pnl.querySelector("#pmode").textContent = "sin bridge (exploit no completó)";
+            pnl.querySelector("#pmode").textContent = "no bridge (exploit did not complete)";
             replaySaved();
-            glog("!! bridge no llegó en 60s. El exploit WebKit no alcanzó SUCCESS.");
-            glog("   el exploit reintenta solo; mira #scr (log del exploit) y el banner.");
-            glog("   si sigue igual, cierra y reabre la app (el arranque de Y2JB es flaky).");
+            glog("!! bridge did not arrive within 60s. The WebKit exploit did not reach SUCCESS.");
+            glog("   the exploit retries on its own; check #scr (exploit log) and the banner.");
+            glog("   if it stays the same, close and reopen the app (Y2JB startup is flaky).");
         }
     }, 60000);
 })(window);

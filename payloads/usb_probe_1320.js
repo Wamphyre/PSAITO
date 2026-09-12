@@ -1,16 +1,16 @@
-// usb_probe_1320.js — sonda de acceso a almacenamiento USB desde el sandbox.
-// Objetivo: averiguar si el browser/app sandbox de la PS5 puede VER y ESCRIBIR
-// en un pendrive, para poder guardar el log del toolkit ahi.
+// usb_probe_1320.js — USB storage access probe from the sandbox.
+// Goal: find out whether the PS5 browser/app sandbox can SEE and WRITE to a
+// USB drive, so the toolkit log could be stored there.
 //
-// Que hace:
-//   P1  open(O_RDONLY|O_DIRECTORY) sobre rutas USB candidatas
-//   P2  en las que abran, getdirentries(0x1000) para listar el contenido
-//   P3  intenta crear <usb>/psaito_usb/psaito_log.txt y escribir una marca
-//   P4  veredicto + limpieza
+// What it does:
+//   P1  open(O_RDONLY|O_DIRECTORY) over candidate USB paths
+//   P2  for the ones that open, getdirentries(0x1000) to list contents
+//   P3  tries to create <usb>/psaito_usb/psaito_log.txt and write a marker
+//   P4  verdict + cleanup
 //
-// ABI (ver fs_probe_1320.js): open5 close6 read3 write4 unlink10 mkdir136
+// ABI (see fs_probe_1320.js): open5 close6 read3 write4 unlink10 mkdir136
 // rmdir137 getdirentries196. fcntl: O_RDONLY0 O_DIRECTORY0x20000 O_CWT0x601.
-// Logging: log() del bridge (pantalla #plg + TCP) y W() al canal TCP si existe.
+// Logging: bridge log() (screen #plg + TCP) and W() to the TCP channel if any.
 (() => {
     const B = (x) => BigInt(x), I = (x) => BigInt.asIntN(64, x);
     const S_RD = 3n, S_WR = 4n, S_OP = 5n, S_CL = 6n, S_UNL = 10n,
@@ -35,7 +35,7 @@
     const MSG = malloc(64);
     const PS = (b, s) => { let n = 0; for (; n < s.length && n < 255; n++) write8(b + BigInt(n), s.charCodeAt(n) & 255); write8(b + BigInt(n), 0); return b; };
 
-    say("inicio - sonda USB/almacenamiento pid=" + I(syscall(SYSCALL.getpid)));
+    say("begin - USB/storage probe pid=" + I(syscall(SYSCALL.getpid)));
 
     // ---------------------------------------------------------------- P1
     const PATHS = [
@@ -45,7 +45,7 @@
         "/mnt/usb/", "/external", "/external/usb0", "/ext0",
         "/data/usb0", "/user/usb0", "/host", "/app0", "/data", "/temp",
     ];
-    say("P1: open(O_RDONLY|O_DIRECTORY) sobre " + PATHS.length + " rutas");
+    say("P1: open(O_RDONLY|O_DIRECTORY) over " + PATHS.length + " paths");
     const vis = [];
     for (const p of PATHS) {
         let fd;
@@ -60,10 +60,10 @@
             try { syscall(S_CL, fd); } catch (e) {}
         }
     }
-    say("P1 visible " + vis.length + "/" + PATHS.length + ": " + (vis.join(" ") || "(ninguna)"));
+    say("P1 visible " + vis.length + "/" + PATHS.length + ": " + (vis.join(" ") || "(none)"));
 
     // ---------------------------------------------------------------- P2
-    say("P2: getdirentries sobre las que abrieron");
+    say("P2: getdirentries on the ones that opened");
     let listOK = 0;
     for (const p of vis) {
         let fd;
@@ -77,25 +77,25 @@
         if (r > 0n) {
             listOK++;
             const n = Number(r) > 128 ? 128 : Number(r);
-            say("P2 " + p + " n=" + r + " entradas='" + STR(DB, n).replace(/[^\x20-\x7e]/g, ".") + "'");
+            say("P2 " + p + " n=" + r + " entries='" + STR(DB, n).replace(/[^\x20-\x7e]/g, ".") + "'");
         } else if (r === 0n) {
-            say("P2 " + p + " dir vacia");
+            say("P2 " + p + " empty dir");
         } else {
             say("P2 " + p + J(EN()));
         }
         try { syscall(S_CL, fd); } catch (e) {}
     }
-    say("P2 listables: " + listOK);
+    say("P2 listable: " + listOK);
 
     // ---------------------------------------------------------------- P3
-    // Se intenta escribir SOLO en las rutas que parecen de almacenamiento
-    // externo. Nunca en /app0, /data, /temp, /host (son del sandbox).
+    // Writes are attempted ONLY on paths that look like external storage.
+    // Never on /app0, /data, /temp, /host (they belong to the sandbox).
     const WRITE_OK = [];
     const EXTERNAL = vis.filter((p) => /usb|ext|media|mnt\/sd|external/i.test(p) && p !== "/external");
     if (EXTERNAL.length === 0) {
-        say("P3: no hay ruta externa visible -> sin candidato de escritura");
+        say("P3: no external path visible -> no write candidate");
     } else {
-        say("P3: intentando escribir en " + EXTERNAL.join(", "));
+        say("P3: attempting to write in " + EXTERNAL.join(", "));
         for (const d of EXTERNAL) {
             const dir = d.replace(/\/$/, "") + "/psaito_usb";
             try {
@@ -103,8 +103,8 @@
                 let m = I(syscall(S_MK, PS(PATHBUF, dir), 0x1ffn));
                 if (m < 0n) {
                     const e = EN();
-                    if (e === 17) say("P3 mkdir EEXIST: reutilizo");
-                    else { say("P3 mkdir" + J(e) + " -> siguiente"); continue; }
+                    if (e === 17) say("P3 mkdir EEXIST: reusing");
+                    else { say("P3 mkdir" + J(e) + " -> next"); continue; }
                 } else say("P3 mkdir ok");
             } catch (e) { say("P3 mkdir EX " + e); continue; }
 
@@ -123,14 +123,14 @@
 
             if (w >= 0n) {
                 WRITE_OK.push(file);
-                say("P3 *** ESCRITURA USB OK en " + file + " ***");
+                say("P3 *** USB WRITE OK at " + file + " ***");
                 break;
             }
         }
     }
 
     // ---------------------------------------------------------------- P4
-    say("P4: veredicto + limpieza");
+    say("P4: verdict + cleanup");
     for (const d of EXTERNAL) {
         const dir = d.replace(/\/$/, "") + "/psaito_usb";
         try {
@@ -140,11 +140,11 @@
     }
 
     let v;
-    if (WRITE_OK.length) v = "USB ESCRIBIBLE: " + WRITE_OK[0];
-    else if (listOK) v = "USB visible (listable) pero NO escribible";
-    else if (vis.length) v = "USB visible " + vis.length + " rutas pero sin listar/escribir";
-    else v = "USB NO visible desde el sandbox (0/" + PATHS.length + " rutas)";
-    say("VEREDICTO: " + v);
+    if (WRITE_OK.length) v = "USB WRITABLE: " + WRITE_OK[0];
+    else if (listOK) v = "USB visible (listable) but NOT writable";
+    else if (vis.length) v = "USB visible " + vis.length + " paths but cannot list/write";
+    else v = "USB NOT visible from sandbox (0/" + PATHS.length + " paths)";
+    say("VERDICT: " + v);
     N(v);
 
     for (let i = 0; i < 6; i++) { N(v.slice(0, 90)); for (let j = 0; j < 2000; j++) { try { syscall(Y); } catch (e) {} } }
