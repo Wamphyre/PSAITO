@@ -28,7 +28,7 @@ probe; other probes can be selected from the panel.
 4. Press **Launch** — wait for the runtime panel; the default probe starts
    automatically and prints its results.
 
-Optional URL params:
+Optional URL params (all of them propagate from `index.html` to `runtime.html`):
 - `?auto=<file.js>` — auto-run routine (`auto=0` disables; default
   `aio_reach_1320.js`)
 - `?pb=<base>` — payload base URL (default same-origin `payloads/`)
@@ -46,11 +46,12 @@ Optional URL params:
 
 The bridge **and** the payloads write to the on-screen panel (`#plg`), to the
 main runtime log (`#scr`) and to a full in-memory buffer that is not truncated.
-Two buttons in the panel:
+The panel exposes `RUN`, `RESET`, `DOWNLOAD LOG` and `CLEAR`; the two log
+buttons are:
 
-- **DESCARGAR LOG** — downloads the whole buffer as `psaito_log_<timestamp>.txt`
+- **DOWNLOAD LOG** — downloads the whole buffer as `psaito_log_<timestamp>.txt`
   (via `Blob` + `a[download]`); lands in the console's download area.
-- **LIMPIAR** — clears the buffer.
+- **CLEAR** — clears the buffer.
 
 The buffer is also mirrored to `localStorage`, so it survives a page/app restart
 (Y2JB startup may reload the tab). On reopen the previous log is replayed at the
@@ -109,13 +110,14 @@ https://<user>.github.io/<repo>/?logserver=http://<PC-IP>:8080/log&auto=hello_13
 ```
 
 Expected: `runtime.html` shows `*** SUCCESS ***`, the panel appears with
-`fw 13.20 · modo ROP` (or `DIRECT`), and the PC log receives
+`fw 13.20 · mode ROP` (or `DIRECT`), and the PC log receives
 `BRIDGE-BOOT fw=13.20 ...`. `hello_1320.js` then logs `getpid ok = 0x...`.
 
 ### 3. Second run: the real payload
 
 Once the canary passes, run with the default (`aio_reach_1320.js`), which
-gates the BAGAGWA AIO chain (`RESEARCH/bagagwa-aio-multi-wait-uaf-2026-09-06.md`):
+gates the BAGAGWA AIO chain (research note `RESEARCH/bagagwa-aio-multi-wait-uaf-2026-09-06.md`,
+not shipped in this repository):
 
 ```
 https://<user>.github.io/<repo>/?logserver=http://<PC-IP>:8080/log
