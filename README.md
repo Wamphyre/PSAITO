@@ -35,15 +35,26 @@ Optional URL params:
 - `?logserver=<url>` — remote log endpoint (see **Console log** below)
 - `?rop=0` — force bridge **DIRECT** mode (skip libkernel .text gadget scan)
 - `?log=0` / `?log=1` — force disable/enable remote log
+- `?max=<n>` — attempt ceiling (**default 5**; `0` = endless). The exploit
+  retries on failure; each attempt reallocates ~100-200 MB, so an endless loop
+  saturates WebKit's process memory and the system shows a repeated
+  "not enough memory" dialog that hides the on-screen log. Keep the default
+  (or lower) while testing.
+- `?rd=<ms>` — delay between attempts (default 50 ms)
 
 ### On-console log & USB
 
-The bridge **and** the payloads write to the on-screen panel (`#plg`) and to a
-full in-memory buffer that is not truncated. Two buttons in the panel:
+The bridge **and** the payloads write to the on-screen panel (`#plg`), to the
+main runtime log (`#scr`) and to a full in-memory buffer that is not truncated.
+Two buttons in the panel:
 
 - **DESCARGAR LOG** — downloads the whole buffer as `psaito_log_<timestamp>.txt`
   (via `Blob` + `a[download]`); lands in the console's download area.
 - **LIMPIAR** — clears the buffer.
+
+The buffer is also mirrored to `localStorage`, so it survives a page/app restart
+(Y2JB startup may reload the tab). On reopen the previous log is replayed at the
+top of the panel.
 
 Writing the log to a **USB drive** is not possible from the browser sandbox:
 `payloads/usb_probe_1320.js` probes 24 USB/mount paths (`/mnt/usb*`, `/media`,

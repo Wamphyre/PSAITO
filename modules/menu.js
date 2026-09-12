@@ -70,11 +70,34 @@
 
     // Buffer de log completo (no se trunca) ademas del panel visible.
     const LOG_CAP = 20000;
+    const STORE_KEY = "psaito:log";
     const logBuf = [];
+    // Persistencia: el arranque de Y2JB puede reiniciar la pestana y el log en
+    // memoria se perderia. Se guarda en localStorage (con throttle) para poder
+    // verlo/descargarlo al reabrir. No guarda si el almacenamiento falla.
+    let storeTimer = 0, storeDirty = false;
+    try {
+        const saved = localStorage.getItem(STORE_KEY);
+        if (saved) {
+            const lines = saved.split("\n");
+            for (const l of lines) logBuf.push(l);
+        }
+    } catch (e) {}
+    function persistLog() {
+        storeDirty = true;
+        if (storeTimer) return;
+        storeTimer = setTimeout(() => {
+            storeTimer = 0;
+            if (!storeDirty) return;
+            storeDirty = false;
+            try { localStorage.setItem(STORE_KEY, logBuf.join("\n")); } catch (e) {}
+        }, 500);
+    }
     function logAll(s) {
         s = String(s);
         logBuf.push(s);
         if (logBuf.length > LOG_CAP) logBuf.splice(0, logBuf.length - LOG_CAP);
+        persistLog();
     }
     function glog(s) {
         logAll(s);
@@ -132,6 +155,7 @@
     pnl.querySelector("#plogdl").addEventListener("click", downloadLog);
     pnl.querySelector("#plogclr").addEventListener("click", () => {
         logBuf.length = 0;
+        try { localStorage.removeItem(STORE_KEY); } catch (e) {}
         pnl.querySelector("#plg").textContent = "log limpiado.";
     });
     pnl.querySelector("#purlrun").addEventListener("click", () => {
@@ -149,6 +173,16 @@
         setTimeout(() => location.reload(), 200);
     });
 
+    // Vuelca al panel el log persistido de una ejecucion anterior (si lo hay).
+    function replaySaved() {
+        if (!logBuf.length) return;
+        const d = pnl.querySelector("#plg");
+        if (d.textContent.indexOf("--- log de ejecucion anterior ---") >= 0) return;
+        d.textContent = "--- log de ejecucion anterior ---\n"
+            + logBuf.join("\n") + "\n--- fin log anterior ---";
+        d.scrollTop = d.scrollHeight;
+    }
+
     global.onBridgeReady = function (ps5) {
         pnl.style.display = "block";
         pnl.querySelector("#pmode").textContent =
@@ -156,6 +190,7 @@
             (ps5.mode === "ROP" ? "" : " (! syscall no-op)");
         glog("bridge listo. heap=arena+0x2000..0x8000 pb=" + pb);
         if (ps5.notes && ps5.notes.length) glog("notas: " + ps5.notes.join(" | "));
+        replaySaved();
         if (auto && auto !== "0") {
             glog("auto-run en 1.5s: " + auto + "  (?auto=0 desactiva)");
             autoTimer = setTimeout(() => runFile(auto), 1500);
@@ -169,6 +204,7 @@
         if (!global.PS5 || !global.PS5.ready) {
             pnl.style.display = "block";
             pnl.querySelector("#pmode").textContent = "sin bridge (exploit no completó)";
+            replaySaved();
             glog("!! bridge no llegó en 60s. El exploit WebKit no alcanzó SUCCESS.");
             glog("   el exploit reintenta solo; mira #scr (log del exploit) y el banner.");
             glog("   si sigue igual, cierra y reabre la app (el arranque de Y2JB es flaky).");
