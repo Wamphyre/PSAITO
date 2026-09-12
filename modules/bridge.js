@@ -64,22 +64,19 @@
         console.log(s);
         httpLog(s);
         try { if (typeof global.__psaitoAppend === "function") global.__psaitoAppend(s); } catch (e) {}
-        try {
-            // Tambien al log grande del runtime (#scr), que es la vista
-            // principal y suele quedar visible aunque el panel lateral no.
-            const scr = document.getElementById("scr");
-            if (scr) {
-                scr.textContent = (scr.textContent + "\n" + s).split("\n").slice(-600).join("\n");
-                scr.scrollTop = scr.scrollHeight;
-            }
-        } catch (e) {}
-        try {
-            const d = document.getElementById("plg");
-            if (d) {
-                d.textContent = (d.textContent + "\n" + s).split("\n").slice(-200).join("\n");
-                d.scrollTop = d.scrollHeight;
-            }
-        } catch (e) {}
+        // Append con scroll "pegajoso": solo baja al fondo si el usuario ya
+        // estaba abajo, para poder revisar lineas anteriores en pantalla.
+        const appendSticky = (id, cap) => {
+            try {
+                const d = document.getElementById(id);
+                if (!d) return;
+                const atBottom = d.scrollHeight - d.scrollTop - d.clientHeight < 24;
+                d.textContent = (d.textContent + "\n" + s).split("\n").slice(-cap).join("\n");
+                if (atBottom) d.scrollTop = d.scrollHeight;
+            } catch (e) {}
+        };
+        appendSticky("scr", 2000);
+        appendSticky("plg", 2000);
     }
     global.log = log;
     global.toHex = (x) => HEX(x);

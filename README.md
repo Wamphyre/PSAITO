@@ -63,6 +63,11 @@ The buffer is also mirrored to `localStorage`, so it survives a page/app restart
 top of the panel. The exploit's own log (`#scr`) is captured into the same
 buffer via a MutationObserver.
 
+Both `#scr` and the panel `#plg` keep a long history and scroll independently
+(200+ and 1000 lines kept on screen). Scrolling uses **sticky auto-follow**: new
+lines only snap to the bottom if you are already at the bottom, so you can
+scroll up and read earlier output while the exploit keeps logging.
+
 Writing the log to a **USB drive** is not possible from the browser sandbox:
 `payloads/usb_probe_1320.js` probes 24 USB/mount paths (`/mnt/usb*`, `/media`,
 `/external`, …) and, without a kernel escape (which this toolkit does not

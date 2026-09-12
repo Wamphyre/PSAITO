@@ -306,8 +306,9 @@ body::before{content:"";position:fixed;inset:0;
     document.getElementById("pbar").style.width =
       Math.min(proofCount * 12, 90) + "%";
 
-    // Scroll log
-    scr.scrollTop = scr.scrollHeight;
+    // Scroll log — sticky: solo baja al fondo si el usuario ya estaba abajo
+    const nearBottom = scr.scrollHeight - scr.scrollTop - scr.clientHeight < 24;
+    if (nearBottom) scr.scrollTop = scr.scrollHeight;
 
     // Banner
     if (text.includes("SUCCESS")) {

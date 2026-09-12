@@ -39,7 +39,8 @@
         "#pnl input{width:150px;background:#030508;color:#c0d0e8;" +
         "border:1px solid #0d1825;border-radius:4px;padding:4px}" +
         "#plg{background:#030508;border:1px solid #0d1825;border-radius:4px;" +
-        "height:180px;overflow:auto;white-space:pre-wrap;padding:6px;margin-top:6px}" +
+        "height:280px;overflow:auto;white-space:pre-wrap;padding:6px;margin-top:6px;" +
+        "-webkit-overflow-scrolling:touch}" +
         "#pnl .h{color:#e8f0ff;font-weight:700;letter-spacing:.1em}" +
         // Boton flotante de descarga: siempre visible aunque el panel se oculte
         // o el exploit se cuelgue. Rescata el log en cualquier estado.
@@ -156,8 +157,10 @@
     function glog(s) {
         logAll(s);
         const d = pnl.querySelector("#plg");
-        d.textContent = (d.textContent + "\n" + s).split("\n").slice(-400).join("\n");
-        d.scrollTop = d.scrollHeight;
+        // Scroll pegajoso: solo baja si el usuario ya estaba al final.
+        const atBottom = d.scrollHeight - d.scrollTop - d.clientHeight < 24;
+        d.textContent = (d.textContent + "\n" + s).split("\n").slice(-1000).join("\n");
+        if (atBottom) d.scrollTop = d.scrollHeight;
     }
     global.__psaitoLog = () => logBuf.join("\n");
     global.__psaitoAppend = (s) => logAll(s);
