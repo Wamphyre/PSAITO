@@ -25,6 +25,7 @@
         "netctl5_variants_1320.js",
         "devprobe_1320.js",
         "fs_probe_1320.js",
+        "usb_probe_1320.js",
     ];
 
     let css = document.createElement("style");
@@ -49,7 +50,9 @@
         '<span id="pmode">—</span><br>' +
         '<select id="psel"></select> <input id="pcustom" placeholder="o archivo.js">' +
         '<div><button id="prun">EJECUTAR</button>' +
-        '<button id="pstop" style="background:#552222">RESET</button></div>' +
+        '<button id="pstop" style="background:#552222">RESET</button>' +
+        '<button id="plogdl" style="background:#555f00">DESCARGAR LOG</button>' +
+        '<button id="plogclr" style="background:#333">LIMPIAR</button></div>' +
         'URL: <input id="purl" style="width:290px" placeholder="http://host/payload.js">' +
         '<div><button id="purlrun" style="background:#00764f">RUN URL</button></div>' +
         '<div id="plg">listo.</div>';
@@ -65,10 +68,36 @@
         if (k === auto) sel.value = k;
     }
 
+    // Buffer de log completo (no se trunca) ademas del panel visible.
+    const LOG_CAP = 20000;
+    const logBuf = [];
+    function logAll(s) {
+        s = String(s);
+        logBuf.push(s);
+        if (logBuf.length > LOG_CAP) logBuf.splice(0, logBuf.length - LOG_CAP);
+    }
     function glog(s) {
+        logAll(s);
         const d = pnl.querySelector("#plg");
-        d.textContent = (d.textContent + "\n" + s).split("\n").slice(-200).join("\n");
+        d.textContent = (d.textContent + "\n" + s).split("\n").slice(-400).join("\n");
         d.scrollTop = d.scrollHeight;
+    }
+    global.__psaitoLog = () => logBuf.join("\n");
+    global.__psaitoAppend = (s) => logAll(s);
+    function downloadLog() {
+        try {
+            const stamp = new Date().toISOString().replace(/[:.]/g, "-");
+            const name = "psaito_log_" + stamp + ".txt";
+            const blob = new Blob([logBuf.join("\n")], { type: "text/plain" });
+            const a = document.createElement("a");
+            a.href = URL.createObjectURL(blob);
+            a.download = name;
+            a.style.display = "none";
+            document.body.appendChild(a);
+            a.click();
+            setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 5000);
+            glog("== log descargado: " + name + " ==");
+        } catch (e) { glog("!! descarga no soportada: " + e); }
     }
     function fetchText(url, cb) {
         try {
@@ -100,6 +129,11 @@
 
 
     pnl.querySelector("#prun").addEventListener("click", runNamed);
+    pnl.querySelector("#plogdl").addEventListener("click", downloadLog);
+    pnl.querySelector("#plogclr").addEventListener("click", () => {
+        logBuf.length = 0;
+        pnl.querySelector("#plg").textContent = "log limpiado.";
+    });
     pnl.querySelector("#purlrun").addEventListener("click", () => {
         const u = pnl.querySelector("#purl").value.trim();
         if (!u) return;

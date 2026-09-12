@@ -36,6 +36,21 @@ Optional URL params:
 - `?rop=0` — force bridge **DIRECT** mode (skip libkernel .text gadget scan)
 - `?log=0` / `?log=1` — force disable/enable remote log
 
+### On-console log & USB
+
+The bridge **and** the payloads write to the on-screen panel (`#plg`) and to a
+full in-memory buffer that is not truncated. Two buttons in the panel:
+
+- **DESCARGAR LOG** — downloads the whole buffer as `psaito_log_<timestamp>.txt`
+  (via `Blob` + `a[download]`); lands in the console's download area.
+- **LIMPIAR** — clears the buffer.
+
+Writing the log to a **USB drive** is not possible from the browser sandbox:
+`payloads/usb_probe_1320.js` probes 24 USB/mount paths (`/mnt/usb*`, `/media`,
+`/external`, …) and, without a kernel escape (which this toolkit does not
+attempt), the sandbox never exposes them. Run it to confirm on your firmware;
+the verdict is printed to the panel.
+
 ## Console execution (13.20) — procedure
 
 This section is the operational checklist for a real console run. Two pieces

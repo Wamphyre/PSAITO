@@ -63,6 +63,7 @@
         const s = String(msg);
         console.log(s);
         httpLog(s);
+        try { if (typeof global.__psaitoAppend === "function") global.__psaitoAppend(s); } catch (e) {}
         try {
             const d = document.getElementById("plg");
             if (d) {
