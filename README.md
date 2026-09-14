@@ -200,6 +200,18 @@ and **recovers** from whichever candidate lies in band and is page-aligned
 DIRECT. If none is valid, the panel shows a `DIAG DIRECT MODE` block with the
 raw `webkitBase` / `libkernelBase` values and the reason.
 
+**X1NON 13.XX fallback (`modules/offsets13x.js`)**: verified offsets from
+[X1NON-PSJB](https://github.com/X1NONs/X1NON-PSJB) (raw files under
+`offsets/13.XX/`, generator `sim/gen-offsets13x.mjs`). If the libkernel
+gadget scan fails, the bridge switches to **stub mode**: ROP gadgets are taken
+from the X1NON `wk_gadgetmap` (validated byte-by-byte inside WebKit, which is
+readable), each syscall is executed by jumping to its **libkernel C stub**
+(`syscall_map` — execution only, libkernel is never read), and `pivot`/`save`
+are located by a targeted scan of WebKit `.text`. The badge then shows
+`mode ROP (X1NON stubs)` and `SYSCALL_STUBS` is exposed to payloads. This is
+what makes `syscall()` (and therefore BAGAGWA) available even when libkernel
+`.text` cannot be read.
+
 When DIRECT, `syscall()` throws and syscall-based payloads (BAGAGWA, AIO) cannot
 fire — only `notify`/`nativeCall` probes work.
 
@@ -229,3 +241,4 @@ sent regardless.)
 
 - WebKit research baseline: **[mansoor0x](https://github.com/mansoor0x/POC)** — see `NOTICE.md`
 - PSAITO (runtime bridge, panel, UI, probes): **Wamphyre**
+- 13.XX offset tables (gadgets + syscall stubs): **[X1NONs/X1NON-PSJB](https://github.com/X1NONs/X1NON-PSJB)**

@@ -160,7 +160,12 @@ function cpu(entryPc, st, maxSteps = 200000) {
     for (let step = 0; step < maxSteps; ++step) {
         if (pc === ICU_RET) return;             // reingreso a ICU
         const b0 = M.read8(pc), b1 = M.read8(pc + 1n);
-        if (b0 === 0x58 || b0 === 0x5f || b0 === 0x5e || b0 === 0x5a || b0 === 0x59) {
+        let next = null;                         // pc-advance (multi-byte ins)
+        if (b0 === 0xb8) {                       // mov eax, imm32 (stub prologue)
+            st.rax = BigInt(M.read32(pc + 1n));
+            next = pc + 5n;
+        }
+        else if (b0 === 0x58 || b0 === 0x5f || b0 === 0x5e || b0 === 0x5a || b0 === 0x59) {
             const v = M.read64(st.rsp); st.rsp += 8n;
             if (b0 === 0x58) st.rax = v; else if (b0 === 0x5f) st.rdi = v;
             else if (b0 === 0x5e) st.rsi = v; else if (b0 === 0x5a) st.rdx = v;
@@ -189,6 +194,7 @@ function cpu(entryPc, st, maxSteps = 200000) {
         }
         else if (b0 === 0xc3) { /* ret puro */ }
         else throw new Error("BADGADGET " + b0.toString(16) + "@" + pc.toString(16));
+        if (next !== null) { pc = next; continue; }
         pc = M.read64(st.rsp); st.rsp += 8n;    // ret del gadget
     }
     throw new Error("ROP-RUNAWAY");
@@ -285,6 +291,7 @@ export function bootSim() {
         removeItem: (k) => { delete lsStore[k]; },
     };
     sandbox.__lsStore = lsStore;
+    sandbox.__write8 = (a, v) => M.write8(a, v);
     sandbox.setInterval = () => 0;
     sandbox.clearInterval = () => {};
     sandbox.Blob = class { constructor(parts) { this.parts = parts; } };

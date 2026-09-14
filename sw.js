@@ -1,9 +1,10 @@
-const V = "psaito-v2";
+const V = "psaito-v3";
 // rutas RELATIVAS al sw.js: funciona en root de dominio y en GitHub Pages
 // (/PSAITO/sw.js -> base /PSAITO/)
 const SHELL = [
   "./", "./index.html", "./runtime.html",
   "./modules/offsets.mjs", "./modules/exploit.js",
+  "./modules/offsets13x.js",
   "./modules/bridge.js", "./modules/menu.js",
 ];
 // prefijo de la base (p.ej. "/PSAITO/" o "/")

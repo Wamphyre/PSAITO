@@ -258,7 +258,7 @@
         pnl.style.display = "block";
         pnl.querySelector("#pmode").textContent =
             "fw " + ps5.fw + " · mode " + ps5.mode +
-            (ps5.mode === "ROP" ? "" : " (! syscall no-op)");
+            (ps5.mode === "ROP" ? (ps5.stubMode ? " (X1NON stubs)" : "") : " (! syscall no-op)");
         glog("bridge ready. heap=arena+0x2000..0x8000 pb=" + pb);
         if (ps5.notes && ps5.notes.length) glog("notes: " + ps5.notes.join(" | "));
         if (ps5.mode !== "ROP") {
