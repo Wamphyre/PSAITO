@@ -77,6 +77,30 @@
 
     // ===== FASE 0: la familia AIO responde =====
     say("F0: ABI check familia AIO");
+    // [Mods X1NON] en stub mode, pre-check de los stubs que vamos a usar.
+    // Si falta alguno (p.ej. 727/0x2D7 NO tiene wrapper en libkernel_web),
+    // se aborta con diagnostico en vez de fallar a mitad del disparo.
+    if (PS5.stubMode) {
+        const stubs = (typeof SYSCALL_STUBS !== "undefined" && SYSCALL_STUBS)
+            ? SYSCALL_STUBS : null;
+        if (!stubs) {
+            say("VERDICT: stubMode activo sin tabla SYSCALL_STUBS -> abortar.");
+            return;
+        }
+        const need = [[663, "aio_multi_wait"], [669, "aio_submit_cmd"],
+            [662, "aio_multi_delete"], [666, "aio_multi_cancel"], [20, "getpid"]];
+        const miss = need.filter(([n]) => !stubs[String(n)]);
+        if (miss.length) {
+            say("VERDICT: stubs ausentes: "
+                + miss.map(([n, nm]) => nm + "(" + n + ")").join(",") + " -> abortar.");
+            notif("bagagwa: stubs ausentes, abortando");
+            return;
+        }
+        say("F0 stubs OK: aio_multi_wait=0x"
+            + Number(stubs["663"]).toString(16)
+            + " submit_cmd=0x" + Number(stubs["669"]).toString(16)
+            + " (nota: 0x2D7/727 sin stub -> leak no disponible en modo stub)");
+    }
     const qInit = SC("AIO_INIT_0x29e", A_INIT, [0n], "(flags=0)");
     const qSubmit = SC("AIO_SUBMIT_0x295", A_SUBMIT, [0n, 0n, 0n], "(0,0,0)");
     const qWait = SC("AIO_WAIT_0x297", A_WAIT, [0n, 0n, 0n, 0n, 0n], "(0,0,0,mode0,0)");
