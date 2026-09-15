@@ -70,6 +70,19 @@ let AIO_ALIVE = true;
 let PID = 4242, nextFd = 23, mmapCur = 0x7000000000n;
 const openFds = new Set();
 let tcpConnected = false;
+// [bagagwa] fake-kernel state: AIO requests, osem (zone 128) and UAF.
+const aioReqs = new Map();   // id -> {fd, woken, dangling}
+let aioSeq = 0x100;
+const OSEMS = new Map();     // id -> {name, value, reclaimed, corrupted}
+let osemSeq = 0x61ab;
+const pairPeer = new Map();  // fd <-> fd (socketpair): wake por el extremo B
+let uafArmed = false;        // aio_multi_wait mode0 num>=2 -> array liberado
+let UAF_EFFECT = true;       // si false, el waker corre pero no altera nada
+export function setUafEffect(v) { UAF_EFFECT = !!v; }
+export function resetKernel() {
+    aioReqs.clear(); OSEMS.clear(); pairPeer.clear();
+    uafArmed = false;
+}
 export const out = { notifs: [], tcp: [], pclog: [] };
 export function resetOut() {
     out.notifs.length = out.tcp.length = out.pclog.length = 0;
@@ -98,6 +111,8 @@ function kernel(rax, rdi, rsi, rdx, r10, r8, r9) {
         case 53: {                                         // socketpair
             const a = A(3);
             if (a < 0x100000000n || a > 0x8fffffffffn) return neg(14);
+            pairPeer.set(nextFd, nextFd + 1);
+            pairPeer.set(nextFd + 1, nextFd);
             openFds.add(nextFd); openFds.add(nextFd + 1);
             M.write32(a, nextFd); M.write32(a + 4n, nextFd + 1);
             nextFd += 2;
@@ -106,6 +121,20 @@ function kernel(rax, rdi, rsi, rdx, r10, r8, r9) {
         case 4: {                                          // write
             const fd = Number(A(0)), n = Number(A(2));
             if (!openFds.has(fd)) return neg(9);
+            // socketpair wake: writing to end B completes the pending reads
+            // of end A -> the kernel WAKER runs over the dangling waiters
+            // (UAF) and alters the osems that reclaimed the zone.
+            const peer = pairPeer.get(fd);
+            if (peer !== undefined) {
+                for (const rq of aioReqs.values())
+                    if (rq.fd === peer) rq.woken = true;
+                if (uafArmed) {
+                    uafArmed = false;
+                    if (UAF_EFFECT) for (const o of OSEMS.values())
+                        if (o.reclaimed) { o.corrupted = true; o.value = 0; }
+                }
+                return BigInt(n);
+            }
             const s = Buffer.from(M.readBytes(A(1), Math.min(n, 1024))).toString("latin1").trimEnd();
             out.tcp.push(s);
             console.log("  [PS5→PC:8081] " + s);
@@ -140,14 +169,86 @@ function kernel(rax, rdi, rsi, rdx, r10, r8, r9) {
             if (!AIO_ALIVE) return neg(78);                // ENOSYS
             if (rax === 0x29E) return 0n;                  // init
             if (rax === 0x29C) return 0x11n;               // create
-            if (rax === 0x297) return neg(35);             // wait EAGAIN
+            if (rax === 0x29D) {                           // aio_submit_cmd
+                if (A(0) !== 0x1001n) return neg(22);      // solo MULTI_READ
+                const num = Number(A(2)), rq = A(1), idsP = A(4);
+                if (!(rq >= 0x100000000n && rq < 0x8ffffffffffn)
+                    || !(idsP >= 0x100000000n && idsP < 0x8ffffffffffn)
+                    || num < 1 || num > 64) return neg(22);
+                for (let i = 0; i < num; ++i) {
+                    const fd = M.read32(rq + BigInt(i * 0x28 + 0x20));
+                    if (!openFds.has(fd)) return neg(9);
+                    const id = aioSeq++;
+                    aioReqs.set(id, { fd, woken: false, dangling: false });
+                    M.write32(idsP + BigInt(i * 4), id);
+                }
+                return BigInt(num);
+            }
+            if (rax === 0x297) {                           // aio_multi_wait
+                // mode 0 + num>=2 -> BUG: el MISMO nodo se enlaza N veces, el
+                // cleanup desenlaza solo del ultimo: requests 0..N-2 quedan con
+                // waiters colgando del array liberado (UAF armado).
+                const num = Number(A(1));
+                if (A(3) === 0n && num >= 2 && num <= 64
+                    && A(0) >= 0x100000000n && A(0) < 0x8ffffffffffn) {
+                    for (let i = 0; i < num - 1; ++i) {
+                        const rq = aioReqs.get(M.read32(A(0) + BigInt(i * 4)));
+                        if (rq) rq.dangling = true;
+                    }
+                    uafArmed = true;
+                    return 0n;
+                }
+                return neg(35);                            // resto: EAGAIN
+            }
             return neg(22);                                // resto EINVAL
+        }
+        case 0x225: {                                      // osem_create(name,attr,val,max,opt)
+            const np = A(0);
+            if (!(np >= 0x100000000n && np < 0x8ffffffffffn)) return neg(14);
+            let s = "";
+            for (let i = 0n; i < 32n; ++i) { const c = M.read8(np + i); if (!c) break; s += String.fromCharCode(c); }
+            if (!s) return neg(22);
+            const id = osemSeq++;
+            // malloc(0x60, M_osem) = 128 zone: if the waiters array is
+            // freed, the osem RECLAIMS that block (struct overlaps the node).
+            OSEMS.set(id, { name: s, value: Math.max(1, Number(A(2) & 0xffffffffn)),
+                reclaimed: uafArmed, corrupted: false });
+            return BigInt(id);
+        }
+        case 0x226: {                                      // osem_delete(id)
+            const id = Number(BigInt.asUintN(32, A(0)));
+            if (!OSEMS.has(id)) return neg(22);
+            OSEMS.delete(id);
+            return 0n;
+        }
+        case 0x22A: {                                      // osem_trywait(id)
+            const o = OSEMS.get(Number(BigInt.asUintN(32, A(0))));
+            if (!o) return neg(22);
+            if (o.corrupted || o.value <= 0) return neg(35); // EBUSY
+            o.value -= 1;
+            return 0n;
+        }
+        case 0x22B: {                                      // osem_post(id)
+            const o = OSEMS.get(Number(BigInt.asUintN(32, A(0))));
+            if (!o) return neg(22);
+            if (o.corrupted) return neg(22);               // struct alterado
+            o.value += 1;
+            return 0n;
         }
         case 0x2D7: {                                      // GET_AIO_DEBUG_REQUEST_INFO
             if (!AIO_ALIVE) return neg(78);
             const id = Number(BigInt.asUintN(64, rdi));
             const dstv = A(1);
             if (dstv < 0x100000000n || dstv > 0x8fffffffffn) return neg(14); // EFAULT
+            const rq = aioReqs.get(id);
+            if (rq) {
+                // fired UAF: the request waiters dangle in the freed/reclaimed
+                // zone -> 727 copies DIFFERENT pointers.
+                const freed = rq.dangling && rq.woken && UAF_EFFECT;
+                const base = freed ? 0x000000dead000000n : 0xffff860000000000n;
+                for (let i = 0; i < 3; ++i) M.write64(dstv + BigInt(i * 8), base + BigInt(i) * 0x40n + BigInt(id));
+                return 0n;
+            }
             if (id >= 1 && id <= 0x228 && Number(BigInt.asUintN(64, rdi) >> 16n) < 0x80) {
                 const dst = A(1);
                 for (let i = 0; i < 3; ++i) M.write64(dst + BigInt(i * 8), 0xffff860000000000n + BigInt(i) * 0x40n + BigInt(id));

@@ -163,13 +163,30 @@ unlinks it only from the last, so the others keep `req->waiters` pointing to
 freed memory. The waker is the write primitive (`[r15+0x20]` 32-bit write,
 `[r15]`/`[r15+8]` arbitrary 32-bit decrements, `mtx_lock` on `[r15+0x10]`).
 
-The payload then **reclaims the freed zone and re-reads two witness objects**
-(a `0x70` block matching the num=2 waiter array, and a `0x60` osem-sized block
-with a sentinel refcount at `+0x54`) to detect whether the UAF had any
-observable effect. It does **not** implement the 727 leak or the osem
-conversion — those are only meaningful once a witness confirms the effect.
-(Note: syscall 727 has **no libkernel wrapper**, so it is not callable in
-X1NON stub mode at all; the leak would require classic ROP or another vector.)
+The freed waiter array and the reclaim objects live in the **kernel** zone
+128 — userland memory can never observe writes there — so detection is done
+exclusively through **kernel-side readback**:
+
+- **727 leak** (`aio_debug_request_info`): the syscall copies kernel pointers
+  of each AIO request into a userland buffer (a legitimate kernel read). The
+  payload snapshots every request id before the shot and re-reads after the
+  wake: changed pointers = the dangling `req->waiters` touched the reclaimed
+  zone. In stub mode 727 has no libkernel C stub, so the bridge calls it
+  through the **raw path**: `pop rax` + arg pops from the X1NON WebKit gadget
+  map plus a `syscall; ret` and `pop r10; ret` scanned in WebKit `.text`
+  (badge note `wk-raw-syscall@...`, global `SYSCALL_RAW`). Without raw, the
+  payload disables this channel and keeps the osem probe.
+- **osem probe**: the `osem_create` x4 reclaim lands kernel structs in the
+  freed zone; their semaphore state is readable via `osem_post`/`osem_trywait`
+  (0x22B/0x22A). Each reclaimed osem is probed before and after the wake and
+  compared against a **control osem created before the shot** (which can
+  never overlap the freed zone) — a divergence only in the reclaimed set is
+  the effect. The userland blocks (decTargets, arena witnesses, name strings)
+  remain as tripwires only; `osem_name` is `strlcpy`'d into the kernel, so
+  re-reading it in userland proves nothing.
+
+It still does **not** implement the osem→privilege conversion — that is only
+meaningful once the kernel-side witness confirms the effect.
 
 AIO requests are created against a **pending-read fd**: a `socketpair`
 (`syscall 53`, stub available) whose empty end is the read target — `fd 0`
@@ -184,8 +201,12 @@ attempt and read the `VERDICT` line.
 https://wamphyre.github.io/PSAITO/?log=1&logserver=http://<PC-IP>:8080/log&auto=bagagwa_uaf_1320.js&max=1
 ```
 
-Possible verdicts: `PRIMITIVO VIVO` (the decrement hit), `EFECTO DETECTADO`
-(a witness changed), or `sin efecto observable` (latent/invisible UAF).
+Possible verdicts: `PRIMITIVE HIT` (a userland tripwire was hit — the
+kernel followed a process pointer), `KERNEL EFFECT (osem probe)` (a
+reclaimed osem diverged from the control probe after the wake),
+`KERNEL EFFECT (727 leak)` (the request's kernel pointers changed across
+the wake), `NOISE` (the control osem also drifted — probe unreliable), or
+`NO OBSERVABLE EFFECT` (latent/invisible UAF, with per-channel status).
 
 ### 4. Offset profiles (13.XX) — X1NON-verified
 
@@ -235,7 +256,12 @@ readable), each syscall is executed by jumping to its **libkernel C stub**
 are located by a targeted scan of WebKit `.text`. The badge then shows
 `mode ROP (X1NON stubs)` and `SYSCALL_STUBS` is exposed to payloads. This is
 what makes `syscall()` (and therefore BAGAGWA) available even when libkernel
-`.text` cannot be read.
+`.text` cannot be read. Syscalls **without** a C stub (e.g. 727/0x2D7, which
+has no libkernel wrapper at all) go through the **raw path**: the bridge also
+scans WebKit `.text` for `syscall; ret` + `pop r10; ret` and builds the
+classic `pop rax`+args+`syscall` chain; when both are found `SYSCALL_RAW` is
+exposed (log note `wk-raw-syscall@...`). Without them, stub mode still works
+for stubbed syscalls and `syscall(727)` throws a clear `no-stub-in-table`.
 
 When DIRECT, `syscall()` throws and syscall-based payloads (BAGAGWA, AIO) cannot
 fire — only `notify`/`nativeCall` probes work.
@@ -258,7 +284,7 @@ sent regardless.)
   whether the sandbox still reaches the AIO syscalls — the payload verdicts
   answer both. A single attempt may restart the browser tab — that is expected
   during testing.
-- The site uses a service worker (`psaito-v3`). After a repo update, give
+- The site uses a service worker (`psaito-v4`). After a repo update, give
   Pages 1-2 minutes and reload; the SW self-updates on navigation. Payloads
   and logs are never cached.
 - The Y2JB/exploit startup is flaky: if `SOMETHING WENT WRONG` or a hang

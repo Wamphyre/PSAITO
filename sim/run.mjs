@@ -1,7 +1,7 @@
 // sim/run.mjs — ejecuta la simulacion: bridge + payloads reales de DEMO/
 // sobre el entorno fake (ver fakeps5.mjs). Uso: node sim/run.mjs
 import vm from "node:vm";
-import { bootSim, runPayload, setAioAlive, out } from "./fakeps5.mjs";
+import { bootSim, runPayload, setAioAlive, setUafEffect, resetKernel, out } from "./fakeps5.mjs";
 
 const results = [];
 function check(name, cond, extra) {
@@ -61,6 +61,45 @@ check("aio muerta: GATE CERRADA por SAR", joined2.indexOf("CERRADA por SAR") >= 
 check("aio muerta: VEREDICTO AIO MUERTA", joined2.indexOf("AIO MUERTA") >= 0,
     (out.notifs[out.notifs.length - 1] || "").slice(0, 90));
 
+// ---------- payload 2c: bagagwa UAF with kernel-side detection ----------
+async function runBagagwa(label) {
+    out.notifs.length = 0; out.tcp.length = 0; out.pclog.length = 0;
+    const s = bootSim();
+    vm.runInContext(runPayload("bagagwa_uaf_1320.js"), s);
+    await new Promise((r) => setTimeout(r, 10));
+    return out.pclog.join("\n");
+}
+console.log("\n-- bagagwa_uaf_1320.js · AIO ALIVE + reclaim (waker with effect) --");
+setAioAlive(true); setUafEffect(true); resetKernel();
+{
+    const j = await runBagagwa();
+    const vd = (j.match(/VERDICT: .*/) || ["-"])[0];
+    check("bagagwa: F3 mode0 shot returns 0", /AIO_WAIT_MODE0 .*-> ret=0x0 OK/.test(j));
+    check("bagagwa: reclaimed pre-wake probes ok", /F4 pre-wake probes reclaimed: R0=ok0x0 R1=ok0x0/.test(j));
+    check("bagagwa: control stable (no DRIFT)", !j.includes("DRIFT"), vd.slice(0, 80));
+    check("bagagwa: VERDICT KERNEL EFFECT (osem probe)",
+        j.includes("KERNEL EFFECT (osem probe)"), vd.slice(0, 110));
+    check("bagagwa: 727 leak delta visible in verdict",
+        /VERDICT: .*727 leak: id0/.test(j), vd.slice(-90));
+}
+console.log("\n-- bagagwa_uaf_1320.js · AIO ALIVE, harmless waker (latent UAF) --");
+setAioAlive(true); setUafEffect(false); resetKernel();
+{
+    const j = await runBagagwa();
+    const vd = (j.match(/VERDICT: .*/) || ["-"])[0];
+    check("bagagwa latent: VERDICT NO OBSERVABLE EFFECT",
+        j.includes("NO OBSERVABLE EFFECT"), vd.slice(0, 110));
+}
+console.log("\n-- bagagwa_uaf_1320.js · AIO DEAD (gate, does not fire) --");
+setAioAlive(false); setUafEffect(true); resetKernel();
+{
+    const j = await runBagagwa();
+    check("bagagwa dead: aborts before the shot",
+        j.includes("AIO DEAD") && !j.includes("SHOT aio_multi_wait"),
+        (j.match(/VERDICT: .*/) || ["-"])[0].slice(0, 90));
+}
+setAioAlive(true);
+
 // ---------- bridge: recuperacion de base desde candidata ----------
 console.log("\n-- bridge: base fuera de banda + candidata valida --");
 const sb2 = bootSim();
@@ -106,6 +145,10 @@ const sb3 = bootSim();
     const pivotAt = 0x2000, saveAt = 0x2010;
     for (const [i, b] of [0x48, 0x8b, 0xe7, 0xc3].entries()) sb3.__write8(WK + BigInt(pivotAt + i), b);
     for (const [i, b] of [0x48, 0x89, 0x27, 0xc3].entries()) sb3.__write8(WK + BigInt(saveAt + i), b);
+    // raw syscall (syscalls WITHOUT a C stub, e.g. 727): the bridge scans
+    // these two patterns in WebKit .text: pop r10; ret and syscall; ret
+    for (const [i, b] of [0x41, 0x5a, 0xc3].entries()) sb3.__write8(WK + 0x2020n + BigInt(i), b);
+    for (const [i, b] of [0x0f, 0x05, 0xc3].entries()) sb3.__write8(WK + 0x2030n + BigInt(i), b);
     // 2) stub getpid en un libkernel alternativo (banda valida, sin gadgets)
     const LK2 = 0x850000000n;
     const getpidRva = 0x1b860;
@@ -136,6 +179,22 @@ check("bridge: stub getpid expuesto",
 check("bridge: getpid via cadena stub = 4242",
     out.notifs.some((n) => String(n).indexOf("pid=4242") >= 0),
     (out.notifs[0] || "(sin notif)").slice(0, 80));
+check("bridge: raw syscall enabled in stub mode",
+    sb3.PS5.rawSyscall === true && sb3.SYSCALL_RAW === true,
+    sb3.PS5.notes.filter((n) => String(n).includes("raw")).join(";"));
+{
+    // 727/0x2D7 has NO C stub: callable only through the RAW chain
+    // (poprax + pops + syscall;ret scanned in WebKit).
+    const dst727 = sb3.malloc(32);
+    const q727 = sb3.syscall(0x2d7, 1, dst727);
+    check("raw: syscall 727 without stub returns 0", q727 === 0n, String(q727));
+    check("raw: 727 copies kernel pointers to buffer",
+        (sb3.read64(dst727) >> 40n) === 0xffff86n, "0x" + sb3.read64(dst727).toString(16));
+    const q9999 = sb3.syscall(9999, 0n);
+    check("raw: stub-less syscall returns ENOSYS (-1)",
+        q9999 === -1n && String(sb3.get_error_string()).startsWith("78"),
+        q9999 + " " + sb3.get_error_string());
+}
 
 // ---------- resumen ----------
 const fails = results.filter((r) => !r.pass);
