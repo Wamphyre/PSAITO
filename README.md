@@ -40,6 +40,9 @@ append them to <https://wamphyre.github.io/PSAITO/>, e.g.
 - `?pb=<base>` — payload base URL (default same-origin `payloads/`)
 - `?logserver=<url>` — remote log endpoint (see **Console log** below)
 - `?rop=0` — force bridge **DIRECT** mode (skip libkernel .text gadget scan)
+- `?notify=0` — disable **all** notifications (bridge boot + payloads). If
+  the `nt` offset is wrong on your firmware the native call can kill the
+  process; with this flag the bridge, panel and remote log keep working.
 - `?log=0` / `?log=1` — force disable/enable remote log
 - `?max=<n>` — attempt ceiling (**default 5**; `0` = endless). The exploit
   retries on failure; each attempt reallocates ~100-200 MB, so an endless loop
@@ -118,7 +121,10 @@ PC only if the PC is the DNS/page host. **With GitHub Pages the page host is
 
 The setting propagates from `index.html` to `runtime.html`, or can be set
 directly on the runtime URL. Without it, logs still go to screen (`#scr`) and
-notifications, but the XHR just 404s silently.
+notifications, but the XHR just 404s silently. To change the endpoint **after
+the bridge booted**, run the `setlogserver.js` payload (it calls the bridge's
+`setLogServer()` API — assigning `window.LOG_SERVER` from a payload has no
+effect, the bridge reads it once at boot).
 
 ### 2. First run: validate the exploit before payloads
 
@@ -208,14 +214,34 @@ reclaimed osem diverged from the control probe after the wake),
 the wake), `NOISE` (the control osem also drifted — probe unreliable), or
 `NO OBSERVABLE EFFECT` (latent/invisible UAF, with per-channel status).
 
-### 4. Offset profiles (13.XX) — X1NON-verified
+### 4. Offset profiles (13.XX) — evidence audit
 
-All 13.XX offsets are confirmed by
-[X1NON-PSJB](https://github.com/X1NONs/X1NON-PSJB) (`offsets/13.XX/`): `hc`,
-`gd` 0x1d6fa, `nt` 0x48b0, exports (`gpe` 0x1b860 / `cle` 0x274e0 / `ere`
-0xf7d0) and the two GOT families — identical `wk_gadgetmap` and
-`syscall_map` across 13.00→13.60. `offsets.mjs` still rotates two GOT
-profiles per attempt as a safety net:
+Per-offset evidence, audited programmatically against the raw X1NON files
+(`offsets/13.XX/`) — do not trust the old blanket "verified" claim:
+
+| group | value | evidence |
+|---|---|---|
+| `hc` host-ctor candidates | `0x56a58/0x56ca0/0x57ce8` | exact match in all four X1NON files |
+| `gpe` getpid export | `0x1b860` | equals X1NON `syscall_map[0x14]` in all four files |
+| GOT family split | `0x3352xxx` vs `0x334exxx` | consistent with X1NON `__stack_chk_guard_import` (0x3352198 / 0x334e198) |
+| `wk_gadgetmap` + `syscall_map` (331 stubs) | — | identical across 13.00→13.60 |
+| `gd` 0x1d6fa, `nt` 0x48b0, `cle` 0x274e0, `ere` 0xf7d0, `gps/cls/ers` 0x334exx | — | documented in the **13.60** X1NON header (the exploit's query-string values); extended to 13.00–13.40 by family identity |
+| exact `gps/cls/ers` slots for **13.00/13.20** (`0x33522xx`) | — | family region confirmed only — exact slots interpolated (rejected by the 3-way check if wrong) |
+
+Note on `cle`: X1NON's `syscall_map[0x6] = 0x1C310` is the **raw syscall
+stub** (`__sys_close`-style, in the 0x1AE10–0x1D8D0 stub band), while
+`cle 0x274e0` is the **exported libc symbol** the WebKit GOT resolves to.
+Both are correct; they are different symbols.
+
+Consequences for a real run:
+- A wrong exact GOT slot (13.00/13.20) is rejected by the 3-way check — the
+  exploit retries and burns attempts; watch `KERNEL-BASE` /
+  `VALIDATION-MISMATCH` lines.
+- A wrong `nt` only affects the **bridge** notification (the exploit's
+  SUCCESS proof uses its own collator call, not `nt`). Telemetry now goes out
+  **before** the boot notification and `?notify=0` disables it entirely.
+
+`offsets.mjs` still rotates two GOT profiles per attempt as a safety net:
 
 | profile | gps (getpid slot) | cls (close slot) | firmware family |
 |---|---|---|---|
@@ -279,7 +305,10 @@ sent regardless.)
 
 ## Notes
 
-- 13.XX offsets are **X1NON-verified** (including `gd`/`nt`). What remains
+- 13.XX offsets: see the **evidence audit** in section 4 — `hc`/`gpe`/stub
+  tables are dump-verified; `gd`/`nt`/`cle`/`ere` come from the X1NON 13.60
+  header extended by family identity; the exact 13.00/13.20 GOT slots remain
+  interpolated (the 3-way check rejects them if wrong). What remains
   unverified per-firmware is whether the WebKit SSV bug survived patching and
   whether the sandbox still reaches the AIO syscalls — the payload verdicts
   answer both. A single attempt may restart the browser tab — that is expected

@@ -383,12 +383,20 @@ export function bootSim() {
     sandbox.window = sandbox;
     sandbox.globalThis = sandbox;
     sandbox.console = console;
+    // Los timers se registran para poder cancelarlos al cerrar el sandbox:
+    // un vm con timeout mata el script pero NO cancela los setTimeout que
+    // quedaron pendientes, y esos siguen escribiendo en out/ctx del sim
+    // (contaminaba el smoke: payloads posteriores heredaban el log y los
+    // efectos del anterior).
+    const timers = new Set();
     sandbox.setTimeout = (f, ms) => {
-        const t = setTimeout(f, ms);
+        const t = setTimeout(() => { timers.delete(t); f(); }, ms);
+        timers.add(t);
         if (t.unref) t.unref(); // timers de UI no mantienen viva la sim
         return t;
     };
-    sandbox.clearTimeout = clearTimeout;
+    sandbox.clearTimeout = (t) => { timers.delete(t); clearTimeout(t); };
+    sandbox.__clearTimers = () => { for (const t of timers) clearTimeout(t); timers.clear(); };
     sandbox.URLSearchParams = URLSearchParams;
     sandbox.location = { search: "?go=1&pb=payloads/" };
     sandbox.navigator = { userAgent: "Mozilla/5.0 (PlayStation; PlayStation 5/2.26) AppleWebKit/605.1.15 Version/13.20 PlayStation 5/13.20" };

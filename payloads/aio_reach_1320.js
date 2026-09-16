@@ -1,3 +1,4 @@
+// sim: hang-expected — el bucle final de notificacion/yield se cuelga a proposito (veredicto legible en consola).
 // 2026-09-11 aio_reach_1320: sonda Fase 1 cadena BAGAGWA (RESEARCH/bagagwa-aio-multi-wait-uaf-2026-09-06.md).
 // Objetivo: decidir si la familia AIO 0x295-0x2B0 + el leak 0x2D7 (syscall 727 GET_AIO_DEBUG_REQUEST_INFO,
 // ausente del playbook) son LLAMABLES desde el sandbox Y2JB 13.20. Gate previo a cualquier spray:
@@ -13,7 +14,11 @@ const A_INIT=0x29En,A_CREATE=0x29Cn,A_SUBMIT=0x295n,A_SUBCMD=0x29Dn,A_WAIT=0x297
  A_CANCEL=0x29An,A_DEL=0x296n,A_GET=0x299n,A_MLOCK=0x2B0n,A_SUSP=0x13Bn,A_DEBUG=0x2D7n;
 const EL={1:"EPERM",2:"ENOENT",9:"EBADF",12:"ENOMEM",14:"EFAULT",16:"EBUSY",17:"EEXIST",22:"EINVAL",28:"ENOSPC",35:"EAGAIN",63:"ENAMETOOLONG",78:"ENOSYS",93:"ENOTCAPABLE",94:"ECAPMODE"};
 const ELM=(e)=>EL[e]!==undefined?EL[e]:"?";
-const W=(s)=>{if(sock<0n)return;try{const t=String(s)+"\n";let n=t.length;if(n>511)n=511;for(let i=0;i<n;i++)write8(WB+BigInt(i),t.charCodeAt(i)&255);syscall(SYSCALL.write,sock,WB,BigInt(n));}catch(e){}};
+// [Mods real-run] W() espeja cada linea al log del bridge (panel + logserver
+// HTTP) ANTES del canal TCP: sin el listener TCP crudo (192.168.1.67:8081,
+// hardcodeado de sesiones previas) el gate era INVISIBLE — el veredicto
+// AIO VIVA/MUERTA nunca llegaba a ningun lado.
+const W=(s)=>{try{log(String(s))}catch(e){};if(sock<0n)return;try{const t=String(s)+"\n";let n=t.length;if(n>511)n=511;for(let i=0;i<n;i++)write8(WB+BigInt(i),t.charCodeAt(i)&255);syscall(SYSCALL.write,sock,WB,BigInt(n));}catch(e){}};
 const E=(n,s)=>W("[aio] PASO "+n+": "+s+" - ejecutando"),R=(n,v)=>W("[aio] PASO "+n+" result: "+v);
 const N=(s)=>{try{send_notification(s)}catch(e){}};
 const EN=()=>{try{const m=/^(\d+)/.exec(get_error_string());return m?parseInt(m[1],10):-1}catch(e){return -1}};

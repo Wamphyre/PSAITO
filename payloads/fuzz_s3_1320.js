@@ -1,3 +1,4 @@
+// sim: hang-expected — el bucle final de notificacion/yield se cuelga a proposito (veredicto legible en consola).
 // 2026-08-28 fuzz_s3_1320: SESION 3 - replay EXACTO de la secuencia de la sesion 1 (V1..V14, mismo orden y preparacion) para reproducir el ok:0x0 de IOREQ V14 - PS5 13.20
 // H-PRIMING: en S1 V14 venia DETRAS de 16 llamadas previas (V1-V13,V17-V20 en orden real S1) - alguna dej6 estado que habilito el ok; S2 lanzo V2' en frio -> EINVAL.
 // H-CONTENT: en S1 buf2 tenia 0x5C SOLO en los primeros 0x80 (arm con cap) y contenido malloc (zeros) mas alla; S2 lleno los 0x4000 COMPLETOS -> layouts distintos.

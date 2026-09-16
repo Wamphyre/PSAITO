@@ -196,6 +196,24 @@ check("bridge: raw syscall enabled in stub mode",
         q9999 + " " + sb3.get_error_string());
 }
 
+// ---------- bridge: setLogServer (redireccion runtime de la telemetria) ----------
+// El payload setlogserver.js dependia de esta API: antes asignaba
+// window.LOG_SERVER despues del arranque, que el bridge ya habia leido una
+// vez -> no-op en consola. Se verifica el redirect real de httpLog.
+console.log("\n-- bridge: setLogServer (payload setlogserver.js) --");
+{
+    out.pclog.length = 0;
+    sb3.setLogServer("http://192.168.1.67:8081/no-log-endpoint");
+    sb3.log("probe-endpoint-muerto");
+    const dead = out.pclog.length;
+    out.pclog.length = 0;
+    sb3.setLogServer("http://192.168.1.67:8080/log");
+    sb3.log("probe-redirigido");
+    check("bridge: setLogServer redirige httpLog en runtime",
+        dead === 0 && out.pclog.length === 1 && out.pclog[0] === "probe-redirigido",
+        "dead=" + dead + " live=" + out.pclog.join("|"));
+}
+
 // ---------- resumen ----------
 const fails = results.filter((r) => !r.pass);
 console.log("\n=== RESULTADO: " + (results.length - fails.length) + "/" + results.length + " OK ===");

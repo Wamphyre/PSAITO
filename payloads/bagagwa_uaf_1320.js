@@ -1,3 +1,4 @@
+// sim: hang-expected — el bucle final de notificacion/yield se cuelga a proposito (veredicto legible en consola).
 // bagagwa_uaf_1320.js — BAGAGWA: fires the deterministic UAF (aio_multi_wait mode 0).
 // Spec: "Bagagwa Multi Chain Exploit". This version FIRES the bug (UAF phase)
 // and measures its effect from the KERNEL side (727 leak + osem probe); the

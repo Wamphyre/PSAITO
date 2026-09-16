@@ -603,15 +603,32 @@
         global.SYSCALL_STUBS = PS5.stubs;   // [Mods X1NON] rva absolutos por num (o null)
         global.SYSCALL_RAW = PS5.rawSyscall === true; // [Mods bagagwa] stub-less syscalls via WebKit
         global.get_error_string = get_error_string;
-        global.send_notification = send_notification;
+        // [Mods real-run] ?notify=0 desactiva TODAS las notificaciones (boot
+        // y payloads): si el offset `nt` no es correcto en el firmware objetivo,
+        // la llamada nativa puede matar el proceso; con el flag el bridge y
+        // los payloads siguen funcionando (log/panel/logserver).
+        let notifyEnabled = true;
+        try {
+            notifyEnabled = new URLSearchParams(location.search).get("notify") !== "0";
+        } catch (e) {}
+        global.send_notification = notifyEnabled
+            ? send_notification : function () { return false; };
         global.PS5call = nativeCall;
+        // [Mods real-run] LOG_SERVER se evalua UNA vez al cargar el bridge:
+        // asignar window.LOG_SERVER despues (payload setlogserver.js) no
+        // tenia efecto. API explicita para redirigir la telemetria en runtime.
+        global.setLogServer = function (u) { LOG_SERVER = u ? String(u) : ""; };
 
         try {
             const pid = syscall(SYSN.getpid);
-            send_notification("userland-bridge OK fw=" + PS5.fw + " pid=" + pid + " modo=" + PS5.mode);
+            // [Mods real-run] Telemetria ANTES del notify nativo: si `nt`
+            // esta mal en este firmware, la llamada puede matar el proceso y
+            // la linea BRIDGE-BOOT debe estar ya en el log del PC.
             httpLog("BRIDGE-BOOT fw=" + PS5.fw + " mode=" + PS5.mode
                 + " wk=" + HEX(c.webkitBase) + " libk=" + HEX(c.libkernelBase)
                 + " pid=" + pid + " notes=" + PS5.notes.join(";"));
+            if (notifyEnabled)
+                send_notification("userland-bridge OK fw=" + PS5.fw + " pid=" + pid + " modo=" + PS5.mode);
         } catch (e) {
             httpLog("BRIDGE-BOOT-PARTIAL " + String(e.message || e));
         }

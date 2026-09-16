@@ -1,3 +1,4 @@
+// sim: hang-expected — el bucle final de notificacion/yield se cuelga a proposito (veredicto legible en consola).
 // 2026-08-28 netctl5_variants_1320: variantes del SET (0x20000003) NO cubiertas por slidybat: el H1 solo reporto el CLEAR fd-reuse (parcheado 13.20) -> https://hackerone.com/reports/3320669
 // F1 CENSO slots ifx=1 (SET s0..s7 cap12, paro 1er errno5, exitos ABIERTOS) | F2 fd-reuse slidybat ifx=1,2 + fcntl cond | F3 1 socket en ifx1/2/3->close->re-SET->reuse colgantes | F4 CLEAR cruzado.
 // PREMISA: el SET y su gestion de slots/nombres NUNCA fue reportada (solo el CLEAR; parche -> errno 5 siempre). ifx1/2/3 aceptan SET (ifx0 sucio persistente). Reportable: censo>3, multi-registro, N-colgantes/close, cruzado-match.

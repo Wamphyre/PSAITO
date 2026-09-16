@@ -1,3 +1,4 @@
+// sim: hang-expected — el bucle final de notificacion/yield se cuelga a proposito (veredicto legible en consola).
 // 2026-08-27 fuzz_s1_1320: SESION 1 de fuzzing de la superficie propietaria 0x2xx (24 variantes V1-V24) - PS5 13.20
 // Plan: RESEARCH/fuzzing-0x2xx-plan.md SS2-SS3. Bloques: BATCH_MAP 0x224 (V1-V10), PHYSHM_OPEN 0x275 (V17-V20), IOREQ 0x2CB (V11-V16), get_self_auth_info 0x25F (V21-V24).
 // Orden anti-muerte SS3.5: controles V1/V17 primero; sospechosas V5/V20 al final de su bloque; V8 (prot RWX) AL FINAL DEL TODO. Oracle 0xA5 pre/post en buffers malloc PROPIOS (nunca modulos; vetados mmap/thr_new/rfork).

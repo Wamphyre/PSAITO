@@ -1,3 +1,4 @@
+// sim: hang-expected — el bucle final de notificacion/yield se cuelga a proposito (veredicto legible en consola).
 // fs_probe2_1320: CONTINUACION FS probe. Testea /download0,/system_tmp (sin testear) + DUMP COMPLETO /app0. Canal TCP W() 192.168.1.67:8081 (0x911F/0x4301A8C0).
 // ABI (=fs_probe): getdirentries=196 unlinkat=503 (no 500/501) mkdir136 rmdir137 unlink10 openat499. O_CW=0x201(CREAT|WRONLY) CWT=0x601. AT_RESOLVE_BENEATH=0x2000 sondeado: EINVAL=no existe (11.0 pura, SA-26:42 NO APLICA); ok=kernel 13.x+. ENOTCAPABLE93.
 // /app0 previo con buf64B solo daba "."/".." + 2 nombres cortados -> aqui buf 0x2000 hexdump 32B/linea. filenos ff..ff(=-1)=whiteout UFS: nombre queda, fichero no valido.

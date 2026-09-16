@@ -418,7 +418,7 @@ $("btn").addEventListener("click", () => {
   // [Mods consola] propaga payload de auto-arranque, logserver y parametros
   // operativos del exploit. Sin esto, ?log/?rop/?max/?rd/?n se pierden al
   // pasar de index -> runtime y el exploit usa los defaults.
-  for (const p of ["auto", "logserver", "log", "rop", "max", "rd", "n", "cap", "gap", "lines"]) {
+  for (const p of ["auto", "logserver", "log", "rop", "notify", "max", "rd", "n", "cap", "gap", "lines"]) {
     const v = new URLSearchParams(location.search).get(p);
     if (v !== null) q.set(p, v);
   }

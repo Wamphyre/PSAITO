@@ -1,3 +1,4 @@
+// sim: hang-expected — el bucle final de notificacion/yield se cuelga a proposito (veredicto legible en consola).
 // 2026-08-27 p10_rfork_1320: probe de reachability P10 (SA-26:55.elf CVE-2026-58088 coredump) -> ?rfork vivo en sandbox Orbis 13.20?
 // ABI: SYS_rfork=251=0xFB (syscall.h:221); flags sys/unistd.h:170-173: RFFDG=(1<<2)=0x4 RFPROC=(1<<4)=0x10 RFMEM=(1<<5)=0x20; L166 "operations without RFPROC not supported". Retorno tipo fork: hijo=0, padre=pid_hijo (unistd.h:545 pid_t rfork(int); kern_fork.c no disponible en arbol headers-only). SYS_exit=1 (syscall.h:10).
 // Triage: RESEARCH/freebsd-sa-triage-2026-08.md §P10 (trigger = rfork(RFMEM) + mutacion de mapa entre pasadas del coredump). Canal: TCP crudo a 192.168.1.67:8081 (idiéntico diag_raw3).

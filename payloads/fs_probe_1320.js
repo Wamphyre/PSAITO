@@ -1,3 +1,4 @@
+// sim: hang-expected — el bucle final de notificacion/yield se cuelga a proposito (veredicto legible en consola).
 // fs_probe_1320: probe superficie FS desde sandbox + test AT_RESOLVE_BENEATH (SA-26:42/CVE-2026-49421). Canal base p10_rfork: W() TCP crudo 192.168.1.67:8081 (0x911F/0x4301A8C0).
 // syscall.h (kstuff-13/freebsd-headers/sys): read3(:12) write4(:13) open5(:14) close6(:15) unlink10(:19) mkdir136(:142) rmdir137(:143) getdirentries196(:186) openat499(:418) unlinkat503(:422); verif. sin uso: rename128(:134) fstat189(:180).
 // CORRECCIONES enunciado: 500=readlinkat(:419) 501=renameat(:420) 498=mknodat(:417) mkdirat=496(:415); funlinkat AUSENTE en este arbol (solo 13/14/15+) -> no se usa; unlinkat real=503.

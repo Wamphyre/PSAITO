@@ -1,3 +1,4 @@
+// sim: hang-expected — el bucle final de notificacion/yield se cuelga a proposito (veredicto legible en consola).
 // usb_probe_1320.js — USB storage access probe from the sandbox.
 // Goal: find out whether the PS5 browser/app sandbox can SEE and WRITE to a
 // USB drive, so the toolkit log could be stored there.

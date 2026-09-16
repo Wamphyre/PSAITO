@@ -1,0 +1,15 @@
+{
+  "name": "psaito",
+  "version": "1.0.0",
+  "private": true,
+  "description": "PSAITO — PS5 WebKit research toolkit (bridge, payloads, Node simulator)",
+  "type": "module",
+  "scripts": {
+    "test": "node sim/run.mjs && node sim/smoke.mjs --timeout=1500 --quiet",
+    "test:sim": "node sim/run.mjs",
+    "test:smoke": "node sim/smoke.mjs --timeout=1500 --quiet",
+    "logserver": "python3 DEMO/log_server.py",
+    "offsets": "node sim/gen-offsets13x.mjs"
+  },
+  "license": "UNLICENSED"
+}

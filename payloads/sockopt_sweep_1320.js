@@ -1,3 +1,4 @@
+// sim: hang-expected — el bucle final de notificacion/yield se cuelga a proposito (veredicto legible en consola).
 // sockopt_sweep_1320: barrido setsockopt/getsockopt desde sandbox (roadmap 2.3). Canal W() TCP crudo 192.168.1.67:8081 (0x911F/0x4301A8C0). Base fs_probe_1320 (E/R/N, EN()).
 // ABI: socket=0x61 setsockopt=105/0x69 (syscall.h:112) getsockopt=118/0x76 (syscall.h:125) close=6. AF_INET=2 (sock.h:171) AF_INET6=28 (sock.h:201) SOCK_STREAM=1 SOCK_DGRAM=2.
 // CITAS RESEARCH/kstuff-13/freebsd-headers — sys/socket.h: SOL_SOCKET=0xffff(:161),SO_DEBUG=1(:101),SO_ACCEPTCONN=2(:102),SO_REUSEADDR=4(:103),SO_KEEPALIVE=8(:104),SO_DONTROUTE=0x10(:105),SO_BROADCAST=0x20(:106),SO_USELOOPBACK=0x40(:108),SO_LINGER=0x80(:110),SO_OOBINLINE=0x100(:111),SO_REUSEPORT=0x200(:113),SO_SNDBUF=0x1001(:125),SO_RCVBUF=0x1002(:126),SO_SNDLOWAT=0x1003(:127),SO_RCVLOWAT=0x1004(:128),SO_SNDTIMEO=0x1005(:129),SO_RCVTIMEO=0x1006(:130),SO_ERROR=0x1007(:131),SO_TYPE=0x1008(:132).

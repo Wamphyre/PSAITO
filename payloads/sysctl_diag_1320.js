@@ -1,3 +1,4 @@
+// sim: hang-expected — el bucle final de notificacion/yield se cuelga a proposito (veredicto legible en consola).
 // 2026-08-28 sysctl_diag_1320: diagnostico errno 32 en sysctl, sandbox 13.20 (sysctl_walk aborto en [1,1] errno=32). H-WL: Orbis solo whitelista MIBs concretos (p.ej. [1,14,35,pid] de misc.js get_title_id L340-357), el resto da 32 (codigo Sony; strerror lo revela). H-RAW: raw syscall(0xCA) mal marshalado. SIN ABORTS. Base sysctl_walk_1320. ABI: sysctl=0xCA (global.js:269), __sysctl(name,namelen,old,oldlen,new,newlen), MIB=int32, ret -1+errno via get_error_string="<errno> <strerror>" (misc.js:58).
 (()=>{
 const B=(x)=>BigInt(x),I=(x)=>BigInt.asIntN(64,x),WB=malloc(512);let sock=-1n;

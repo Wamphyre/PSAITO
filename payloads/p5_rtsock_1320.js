@@ -1,3 +1,4 @@
+// sim: hang-expected — el bucle final de notificacion/yield se cuelga a proposito (veredicto legible en consola).
 // 2026-08-27 p5_rtsock_1320: test P5 (CVE-2026-3038, SA-26:05.route) -> stack overflow 127B en rtsock_msg_buffer() via RTM_GET con sockaddr inflado -> panic canary.
 // Bug: bcopy(sa,&ss,sa->sa_len) con sa_len>128 desborda ss en stack; patch SA-26_05_route: KASSERT->check EINVAL. Triage: RESEARCH/freebsd-sa-triage-2026-08.md §P5.
 // ABI: AF_ROUTE=17 (sys/socket.h:188), SOCK_RAW=3 (:92); sendto=SYS 0x85 (global.js sendto:0x85n); route.h:240 RTM_VERSION=5, :248 RTM_GET=0x4, :280 RTA_DST=0x1.

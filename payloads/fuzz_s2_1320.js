@@ -1,3 +1,4 @@
+// sim: hang-expected — el bucle final de notificacion/yield se cuelga a proposito (veredicto legible en consola).
 // 2026-08-28 fuzz_s2_1320: SESION 2 de fuzzing - AISLAMIENTO de la variable ganadora de IOREQ 0x2CB - PS5 13.20
 // Plan: RESEARCH/fuzzing-0x2xx-plan.md SS3.6 (matriz V1'-V8'). Sesion 1 (SS5): IOREQ(1,buf2[0x5C],0x100)=ok:0x0 UNICA ganadora de 24;
 // (1,buf[0xA5],0x10/4/0) y (2/3,buf[0xA5],0x100) = EINVAL. Dos hipotesis en conflicto:

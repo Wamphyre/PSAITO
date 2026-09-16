@@ -1,3 +1,4 @@
+// sim: hang-expected — el bucle final de notificacion/yield se cuelga a proposito (veredicto legible en consola).
 // 2026-08-28 netctl2_1320: variantes netevent (netcontrol 0x63). SET ok desde sandbox; chain close->clear de slidybat PARCHADA en 13.20 (CLEAR=errno 5 no-match). Base: netcontrol_poc_1320.js.
 // SET(0x20000003): getsock_cap(fd) -> netevent LIBRE (ifp(if_index)->if_netevent[3] o g_common_ev[3] global) guarda so+fd. CLEAR(0x20000007): busca FD en 3+3 slots -> match = doble fdrop.
 // V-A overflow: 5 SET sec if_index=0 (3 ifp + desborde global) + 6o/7o cond -> patron ret. V-B if_index invalidos: -1(0xFFFFFFFFn), 0x7FFFFFFF, 1, 2, 3 (NULL-ifp = panic = JACKPOT). V-C dangling: SET+close(s) + 20 connects TCP reales a 192.168.1.67:8081 (netevent colgante = UAF). V-D doble SET mismo fd + 1 CLEAR (leak ref). V-E CLEAR sin SET (control: errno 5).
