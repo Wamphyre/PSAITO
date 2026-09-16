@@ -9,11 +9,14 @@
     let pb = QP.get("pb") || "payloads/";
     if (!pb.endsWith("/")) pb += "/";
 
-    // [PSAITO] payload por defecto tras el exploit: Bagagwa UAF (aio_multi_wait mode 0).
-    // ?auto=<archivo.js> lo cambia; ?auto=0 lo desactiva.
-    const DEF_PAYLOAD = "bagagwa_uaf_1320.js";
+    // [PSAITO] por defecto tras el exploit arranca la CADENA GATED:
+    // hello_1320 (canary) -> aio_reach (gate sandbox AIO) -> bagagwa_uaf
+    // (shot destructivo). Cada paso solo corre si el anterior imprimio su
+    // marca de exito en el log; el shot queda SIEMPRE detras de los gates.
+    // ?auto=<archivo.js> corre un solo payload; ?auto=0 lo desactiva.
+    const DEF_CHAIN = "chain";
     let auto = QP.get("auto");
-    if (auto === null) auto = DEF_PAYLOAD;
+    if (auto === null) auto = DEF_CHAIN;
     let autoTimer = 0;
 
     const KNOWN = [
@@ -79,7 +82,7 @@
     document.body.appendChild(dlfab);
 
     const sel = pnl.querySelector("#psel");
-    if (auto && auto !== "0" && KNOWN.indexOf(auto) < 0)
+    if (auto && auto !== "0" && KNOWN.indexOf(auto) < 0 && auto !== "chain")
         KNOWN.unshift(auto);
     for (const k of KNOWN) {
         const o = document.createElement("option");
@@ -210,6 +213,7 @@
 
 
     function stopExploit() {
+        try { global.__psaitoChainStop && global.__psaitoChainStop(); } catch (e) {}
         try {
             if (typeof global.__psaitoStop === "function") {
                 global.__psaitoStop();
@@ -254,6 +258,91 @@
         d.scrollTop = d.scrollHeight;
     }
 
+    // [Mods chain] Cadena automatica con gates. Cada gate se decide leyendo
+    // lo que el payload IMPRIMIO en el log (marca de exito textual): sin
+    // acoplamiento con internals de los payloads. El paso destructivo solo
+    // corre si el canary y el gate AIO pasaron.
+    const CHAIN_BOOT_MS = (typeof global.__CHAIN_DELAY_MS === "number")
+        ? global.__CHAIN_DELAY_MS : 1500;
+    const CHAIN_STEP_MS = (typeof global.__CHAIN_STEP_MS === "number")
+        ? global.__CHAIN_STEP_MS : 4000;
+    const CHAIN_STEPS = [
+        {
+            id: "userland", file: "hello_1320.js",
+            title: "canary (bridge API vivo)",
+            pass: (t) => t.indexOf("[canary] getpid ok") >= 0,
+            fail: "stage 1 FAILED: the bridge did not answer getpid (badge DIRECT = no syscalls on this boot). Chain stopped.",
+        },
+        {
+            id: "aio", file: "aio_reach_1320.js",
+            title: "gate sandbox AIO (no destructivo)",
+            pass: (t) => t.indexOf("VEREDICTO: AIO VIVA") >= 0,
+            closed: (t) => t.indexOf("AIO MUERTA") >= 0,
+            fail: "stage 2 did not print a verdict - read the log above. Chain stopped.",
+        },
+        {
+            id: "uaf", file: "bagagwa_uaf_1320.js",
+            title: "BAGAGWA UAF shot (DESTRUCTIVO)",
+            pass: (t) => t.indexOf("VERDICT: ") >= 0,
+            fail: "stage 3 did not print a VERDICT (hang/panic?): read the last visible line + the PC log.",
+        },
+    ];
+    let chainTimer = 0;
+    global.__psaitoChainStop = function () {
+        if (chainTimer) { clearTimeout(chainTimer); chainTimer = 0; }
+    };
+    function chainSummary(lines) {
+        glog("==========================================================");
+        glog("PSAITO CHAIN RESULT:");
+        for (const l of lines) glog("  " + l);
+        glog("==========================================================");
+    }
+    function startChain() {
+        let idx = 0;
+        function step() {
+            if (idx >= CHAIN_STEPS.length) return;
+            const s = CHAIN_STEPS[idx];
+            glog("[chain] paso " + (idx + 1) + "/" + CHAIN_STEPS.length
+                + ": " + s.title + " -> " + s.file);
+            // El slice tras la marca aísla las lineas de ESTE paso (el log
+            // persistido de sesiones anteriores ya esta en el buffer).
+            const before = String(global.__psaitoLog()).length;
+            runFile(s.file);
+            chainTimer = setTimeout(function () {
+                chainTimer = 0;
+                const t = String(global.__psaitoLog()).slice(before);
+                if (!s.pass(t)) {
+                    if (s.closed && s.closed(t)) {
+                        chainSummary([
+                            "stage 1 userland ..... OK",
+                            "stage 2 sandbox AIO ... MUERTA (SAR veto) - chain closed here",
+                            "stage 3 kernel UAF ... NOT FIRED (gate closed)",
+                        ]);
+                        glog("[chain] AIO is unreachable from the browser sandbox:");
+                        glog("[chain] the BAGAGWA chain cannot fire. This is a");
+                        glog("[chain] hardware/firmware answer, not a code error.");
+                        return;
+                    }
+                    glog("[chain] " + s.fail);
+                    chainSummary(["chain stopped at stage " + (idx + 1) + " (" + s.id + ")"]);
+                    return;
+                }
+                if (s.id === "uaf") {
+                    const m = t.match(/\[bagagwa\] VERDICT: .*/);
+                    chainSummary([
+                        "stage 1 userland ..... OK",
+                        "stage 2 sandbox AIO ... VIVA",
+                        "stage 3 kernel UAF ... " + (m ? m[0] : "(verdict not captured)"),
+                    ]);
+                    return;
+                }
+                idx++;
+                step();
+            }, CHAIN_STEP_MS);
+        }
+        step();
+    }
+
     global.onBridgeReady = function (ps5) {
         pnl.style.display = "block";
         pnl.querySelector("#pmode").textContent =
@@ -273,8 +362,16 @@
         }
         replaySaved();
         if (auto && auto !== "0") {
-            glog("auto-run in 1.5s: " + auto + "  (?auto=0 disables)");
-            autoTimer = setTimeout(() => runFile(auto), 1500);
+            if (auto === "chain") {
+                glog("auto-run in " + CHAIN_BOOT_MS + "ms: GATED CHAIN "
+                    + CHAIN_STEPS.map((s) => s.file).join(" -> ")
+                    + " (stops at the first closed gate)");
+                autoTimer = setTimeout(startChain, CHAIN_BOOT_MS);
+            } else {
+                glog("auto-run in 1.5s: " + auto
+                    + "  (?auto=0 disables; ?auto=chain = gated chain)");
+                autoTimer = setTimeout(() => runFile(auto), 1500);
+            }
         }
     };
 

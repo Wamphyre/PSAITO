@@ -378,7 +378,12 @@ function makeCtx() {
 }
 
 // ---------- sandbox navegador mínimo + carga del bridge ----------
-export function bootSim() {
+// opts.search: querystring del "location" (default auto=0: sin auto-arranque
+//   de menu.js, para que los tests controlen que corre y cuando).
+// opts.chainDelayMs / opts.chainStepMs: aceleran la cadena gated del menu en
+//   sim (la consola usa 1500/4000 ms).
+export function bootSim(opts) {
+    opts = opts || {};
     const sandbox = {};
     sandbox.window = sandbox;
     sandbox.globalThis = sandbox;
@@ -398,7 +403,11 @@ export function bootSim() {
     sandbox.clearTimeout = (t) => { timers.delete(t); clearTimeout(t); };
     sandbox.__clearTimers = () => { for (const t of timers) clearTimeout(t); timers.clear(); };
     sandbox.URLSearchParams = URLSearchParams;
-    sandbox.location = { search: "?go=1&pb=payloads/" };
+    sandbox.location = { search: opts.search || "?go=1&pb=payloads/&auto=0" };
+    if (typeof opts.chainDelayMs === "number")
+        sandbox.__CHAIN_DELAY_MS = opts.chainDelayMs;
+    if (typeof opts.chainStepMs === "number")
+        sandbox.__CHAIN_STEP_MS = opts.chainStepMs;
     sandbox.navigator = { userAgent: "Mozilla/5.0 (PlayStation; PlayStation 5/2.26) AppleWebKit/605.1.15 Version/13.20 PlayStation 5/13.20" };
     sandbox.sessionStorage = { getItem: () => null, setItem() {}, removeItem() {} };
     const lsStore = {};

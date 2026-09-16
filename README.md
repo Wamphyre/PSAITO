@@ -14,8 +14,11 @@ After the demonstration completes, PSAITO provides a small JavaScript
 runtime API (`malloc`, `read/write`, `syscall`, notifications) plus an
 on-screen payload panel, so analysis routines (`.js` probes) can be loaded
 and executed directly from GitHub — no PC, cables or extra tooling needed.
-The default routine is `bagagwa_uaf_1320.js` (the BAGAGWA `aio_multi_wait`
-mode 0 UAF); other probes can be selected from the panel.
+By default a **gated chain** runs automatically once the bridge boots:
+`hello_1320.js` (canary) → `aio_reach_1320.js` (AIO gate) →
+`bagagwa_uaf_1320.js` (the BAGAGWA `aio_multi_wait` mode 0 UAF shot) — each
+step only runs if the previous one passed, and the run ends with a
+`PSAITO CHAIN RESULT` summary.
 
 ## Usage (PS5)
 
@@ -24,19 +27,25 @@ mode 0 UAF); other probes can be selected from the panel.
    - Secondary DNS: `0.0.0.0`
 2. Open the PS5 web browser (guide entry point).
 3. Visit the toolkit URL: **<https://wamphyre.github.io/PSAITO/>**
-4. Press **Launch** — wait for the runtime panel; the default probe starts
-   automatically and prints its results.
+4. Press **Launch** — the panel appears and the **gated chain** runs
+   automatically: `hello_1320.js` (canary) → `aio_reach_1320.js` (AIO gate)
+   → `bagagwa_uaf_1320.js` (BAGAGWA shot), stopping at the first closed gate
+   and ending with a `PSAITO CHAIN RESULT` summary on the panel and the
+   remote log.
 
-> **Warning**: the default auto-run is `bagagwa_uaf_1320.js`, which **fires a
-> kernel UAF** and can hang/panic the console. For a first, non-destructive
-> check use `?auto=hello_1320.js` (canary) or `?auto=aio_reach_1320.js`
-> (AIO reachability gate).
+> **Warning**: the chain's last step **fires the kernel UAF** and can
+> hang/panic the console — it only runs if the canary and the AIO gate pass.
+> For a non-destructive first check use `?auto=hello_1320.js` (canary only)
+> or `?auto=aio_reach_1320.js`. To skip the gates and shoot directly:
+> `?auto=bagagwa_uaf_1320.js` (destructive).
 
 Optional URL params (all of them propagate from `index.html` to `runtime.html`):
 append them to <https://wamphyre.github.io/PSAITO/>, e.g.
 `https://wamphyre.github.io/PSAITO/?max=3&rd=3000&auto=hello_1320.js`.
-- `?auto=<file.js>` — auto-run routine (`auto=0` disables; default
-  `bagagwa_uaf_1320.js`)
+- `?auto=<file.js>` — auto-run a single routine; **default (no param) is
+  `chain`**: the gated sequence canary → AIO gate → BAGAGWA shot that stops
+  at the first closed gate and prints a `PSAITO CHAIN RESULT` summary;
+  `?auto=0` disables all auto-run
 - `?pb=<base>` — payload base URL (default same-origin `payloads/`)
 - `?logserver=<url>` — remote log endpoint (see **Console log** below)
 - `?rop=0` — force bridge **DIRECT** mode (skip libkernel .text gadget scan)
@@ -63,7 +72,7 @@ not depend on the exploit succeeding, so the log controls stay reachable even
 if the exploit loops on memory failures. It exposes `RUN`, `RESET`, `STOP`,
 `DOWNLOAD LOG` and `CLEAR`; plus a fixed **DOWNLOAD LOG** button at the bottom
 right of the screen (independent of the panel). `STOP` halts the retry loop
-without reloading.
+and the gated chain without reloading.
 
 - **DOWNLOAD LOG** — downloads the whole buffer as `psaito_log_<timestamp>.txt`
   (via `Blob` + `a[download]`); lands in the console's download area.
@@ -88,9 +97,10 @@ the verdict is printed to the panel.
 ## Console execution (13.00 → 13.60) — procedure
 
 This section is the operational checklist for a real console run. Two pieces
-matter beyond the toolkit itself: a **remote log endpoint** on your PC and the
-**offset profile** the exploit will try. All 13.XX offsets (WebKit GOT,
-libkernel `gd`/`nt`, exports) are **X1NON-verified** — see section 4.
+matter beyond the toolkit itself: a **remote log endpoint** on your PC and
+the **offset profile** the exploit will try — check the per-offset
+**evidence audit** in section 4 before trusting any offset on a given
+firmware.
 
 ### 0. Publish
 
@@ -128,8 +138,9 @@ effect, the bridge reads it once at boot).
 
 ### 2. First run: validate the exploit before payloads
 
-Launch with the canary as the auto-run to confirm the WebKit exploit completes
-and the bridge boots:
+The default gated chain already runs the canary as its first step; this URL
+runs the canary **alone** (non-destructive) to confirm the WebKit exploit
+completes and the bridge boots:
 
 ```
 https://wamphyre.github.io/PSAITO/?log=1&logserver=http://<PC-IP>:8080/log&auto=hello_1320.js&max=3&rd=3000
@@ -148,9 +159,9 @@ gets the browser-process RW primitive and publishes `window.__PS5_CTX` +
 A payload **cannot run before stage 1 succeeds** — `onBridgeReady` (and the
 auto-run 1.5 s later) only fires after `*** SUCCESS ***`.
 
-Once the canary passes, the default (`bagagwa_uaf_1320.js`) fires the BAGAGWA
-`aio_multi_wait` mode 0 UAF (see 3b). A lighter alternative to first confirm
-AIO reachability is `aio_reach_1320.js`:
+Once the canary passes, the chain proceeds to `bagagwa_uaf_1320.js`, which
+fires the BAGAGWA `aio_multi_wait` mode 0 UAF (see 3b). A lighter
+alternative to confirm AIO reachability alone is `aio_reach_1320.js`:
 
 ```
 https://wamphyre.github.io/PSAITO/?log=1&logserver=http://<PC-IP>:8080/log&max=3&rd=3000&auto=aio_reach_1320.js
@@ -213,6 +224,29 @@ reclaimed osem diverged from the control probe after the wake),
 `KERNEL EFFECT (727 leak)` (the request's kernel pointers changed across
 the wake), `NOISE` (the control osem also drifted — probe unreliable), or
 `NO OBSERVABLE EFFECT` (latent/invisible UAF, with per-channel status).
+
+### 3c. Reading the `PSAITO CHAIN RESULT`
+
+The default chain ends with a summary block on the panel and the remote log
+(the stage-3 line embeds the payload's own `VERDICT`):
+
+    PSAITO CHAIN RESULT:
+      stage 1 userland ..... OK
+      stage 2 sandbox AIO ... VIVA
+      stage 3 kernel UAF ... [bagagwa] VERDICT: KERNEL EFFECT (osem probe) ...
+
+| summary | meaning | next step |
+|---|---|---|
+| stage 1 FAILED | bridge did not answer `getpid` (badge `DIRECT` = no syscalls this boot) | read `#scr`: offset profile rejected, or SSV patched on this fw |
+| stage 2 … MUERTA (SAR veto) | AIO syscalls unreachable from the browser sandbox | hardware answer: BAGAGWA cannot fire from this entry point |
+| stage 3 … KERNEL EFFECT | the waker touched the reclaimed zone — the UAF is real on this kernel | kernel-side witness confirmed; osem→privilege conversion becomes meaningful |
+| stage 3 … NO OBSERVABLE EFFECT | the harness fired but no channel moved | reclaim/waker hypothesis wrong — iterate the research notes |
+| stage 3 … PRIMITIVE HIT | stronger than expected: the kernel followed a process pointer | re-examine the tripwires before repeating |
+| chain stopped at stage N, no verdict | payload hung or panicked the console | read the last visible line + the PC log |
+
+Every outcome is a real answer from the hardware — including the negative
+ones: a closed gate means that link of the chain is dead on that firmware,
+and no code change can revive it from the browser.
 
 ### 4. Offset profiles (13.XX) — evidence audit
 
@@ -302,6 +336,31 @@ remote logging by default in that case. **Always pass `?log=1` together with
 
 (Bridge/menu logs use `httpLog`, which does not check the origin, so they are
 sent regardless.)
+
+## Development (simulator & tests)
+
+The `sim/` directory simulates the post-handoff environment (bridge and
+payloads — the WebKit exploit itself is not simulated): a mini-x86 CPU
+executes the real ROP chains and a fake ORBIS kernel implements the
+AIO/osem/727 ABI with configurable behavior (`setAioAlive`, `setUafEffect`).
+The gated chain is covered end-to-end: an AIO-alive run reaches the kernel
+verdict, an AIO-dead run closes at the gate **without firing the shot**.
+
+```
+npm test                          # sim/run.mjs (36 checks) + payload smoke
+node sim/run.mjs                  # bridge + chain behavior checks
+node sim/smoke.mjs --timeout=1500 --quiet   # API-compat smoke over all payloads
+```
+
+- Payloads that intentionally end in a notification/yield loop (console UX
+  so the verdict stays readable) carry a `// sim: hang-expected` header;
+  the smoke reports them as `HANG*` and they do not fail the run
+  (`--strict` makes them fail).
+- `sim/fakeps5.mjs` exports `bootSim({ search, chainDelayMs, chainStepMs })`
+  so tests can run the chain fast; on console the chain uses 1500/4000 ms.
+- The smoke isolates every payload (sandbox timers are tracked and cleared),
+  captures async rejections (a late `ReferenceError` is an `APIGAP`, not a
+  silent OK), and exits non-zero only on real failures.
 
 ## Notes
 

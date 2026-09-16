@@ -214,6 +214,48 @@ console.log("\n-- bridge: setLogServer (payload setlogserver.js) --");
         "dead=" + dead + " live=" + out.pclog.join("|"));
 }
 
+// ---------- cadena gated automatica (default de consola: abrir -> Launch -> veredicto) ----------
+// La cadena del menu corre los payloads reales y decide por lo que IMPRIMEN.
+// Escenario A: AIO viva + efecto -> los 3 pasos corren y captura el VERDICT.
+// Escenario B: AIO muerta -> cierra en el gate 2 y el shot NO se dispara.
+async function chainScenario(search) {
+    const s = bootSim({ search, chainDelayMs: 80, chainStepMs: 400 });
+    // El sim emula cada syscall como una cadena ROP completa: los evals de
+    // aio_reach/bagagwa bloquean segundos (en consola real son <1s). Se
+    // espera al resumen final de la cadena, no a un delay fijo.
+    const t0 = Date.now();
+    while (Date.now() - t0 < 30000) {
+        await new Promise((r) => setTimeout(r, 500));
+        if (String(s.__psaitoLog()).includes("PSAITO CHAIN RESULT:")) break;
+    }
+    return String(s.__psaitoLog());
+}
+console.log("\n-- cadena gated · AIO VIVA + efecto --");
+setAioAlive(true); setUafEffect(true); resetKernel();
+{
+    const lg = await chainScenario("?go=1&pb=payloads/&auto=chain");
+    check("chain: los 3 pasos corren",
+        lg.includes("paso 1/3") && lg.includes("paso 2/3") && lg.includes("paso 3/3"), "");
+    check("chain: veredicto kernel capturado",
+        /\[bagagwa\] VERDICT: KERNEL EFFECT/.test(lg),
+        (lg.match(/\[bagagwa\] VERDICT: [^\n]*/) || ["-"])[0].slice(0, 90));
+    check("chain: resumen final con las 3 etapas",
+        lg.includes("PSAITO CHAIN RESULT:")
+            && lg.includes("stage 1 userland ..... OK")
+            && lg.includes("stage 2 sandbox AIO ... VIVA")
+            && lg.includes("stage 3 kernel UAF ..."), "");
+}
+console.log("\n-- cadena gated · AIO MUERTA (el shot NO se dispara) --");
+setAioAlive(false); resetKernel();
+{
+    const lg = await chainScenario("?go=1&pb=payloads/&auto=chain");
+    check("chain muerta: el gate AIO cierra la cadena",
+        lg.includes("paso 2/3") && lg.includes("MUERTA (SAR veto)"), "");
+    check("chain muerta: sin paso 3 ni shot",
+        !lg.includes("paso 3/3") && !lg.includes("AIO_WAIT_MODE0"), "");
+}
+setAioAlive(true);
+
 // ---------- resumen ----------
 const fails = results.filter((r) => !r.pass);
 console.log("\n=== RESULTADO: " + (results.length - fails.length) + "/" + results.length + " OK ===");
