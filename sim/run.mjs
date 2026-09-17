@@ -186,7 +186,7 @@ check("bridge: raw syscall enabled in stub mode",
     // 727/0x2D7 has NO C stub: callable only through the RAW chain
     // (poprax + pops + syscall;ret scanned in WebKit).
     const dst727 = sb3.malloc(32);
-    const q727 = sb3.syscall(0x2d7, 1, dst727);
+    const q727 = sb3.syscall(0x2d7, 1, dst727, 1);
     check("raw: syscall 727 without stub returns 0", q727 === 0n, String(q727));
     check("raw: 727 copies kernel pointers to buffer",
         (sb3.read64(dst727) >> 40n) === 0xffff86n, "0x" + sb3.read64(dst727).toString(16));

