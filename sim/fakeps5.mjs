@@ -79,13 +79,112 @@ const pairPeer = new Map();  // fd <-> fd (socketpair): wake por el extremo B
 let uafArmed = false;        // aio_multi_wait mode0 num>=2 -> array liberado
 let UAF_EFFECT = true;       // si false, el waker corre pero no altera nada
 export function setUafEffect(v) { UAF_EFFECT = !!v; }
+
+// ===== [conversión] laboratorio zona-128 a nivel de bytes (paste BAGAGWA §1+§4) =====
+// Modela el bloque liberado (array de waiters num=2 -> 0x70, zona 128), su
+// reclaim por osem_create (malloc(0x60, M_osem)) o por un primitivo externo
+// (hook de test), y los efectos EXACTOS del waker sobre los campos del nodo:
+//   write32 [node+0x20], mtx_lock [node+0x10]+0x18,
+//   dec dword [[node+0]]  (sin null-check -> panic si apunta a nada mapeado)
+//   dec dword [[node+8]]  (skip si 0: mode 0 lo deja M_ZERO - paste §1)
+// osem (paste §4): flag byte [obj+0x45]&1 (clear -> free sin leer refcount),
+// refcount dword [obj+0x54] (mismo ancho que el dec del waker). El nombre se
+// strlcpy'a DENTRO del struct a OSEM_NAME_OFF (layout real desconocido: el
+// payload osem_conv lo descubre en consola; los hooks lo mueven para probar
+// ambos mundos). Refcount inicial del modelo = 2 (handle id + ref interna:
+// osem_open hace inc, close dec — paste §4).
+const osemHeap = new Map();  // addr -> {id, bytes: Uint8Array(0x60)}
+const osemMeta = new Map();  // id  -> {addr, tomb}
+let osemAddrSeq = 0;
+const OSEM_ADDR_BASE = 0xffff860200000000n;  // banda de structs osem del modelo
+const ANON_A = 0xffff860300000000n;           // puntero "kernel" del head (+0)
+const ANON_MTX = 0xffff860300001000n;         // mtx interna del head (+0x10)
+const Z128_BASE = 0xffff860400000000n;        // banda del bloque liberado
+let zseq = 0;
+let z128Addr = null;         // direccion del bloque liberado (nodo colgante)
+let z128Free = false;        // ¿esta libre (reclamable) o ya lo tomó alguien?
+let z128Owner = "none";      // "stale" | "osem" | "inject" | "none"
+let z128Stale = null;        // Uint8Array(0x70): bytes del nodo tras mode 0
+let z128Inject = null;       // bytes inyectados por el hook de test
+let OSEM_NAME_OFF = 0x28;    // offset del nombre dentro del struct (modelo)
+let OSEM_FLAG = 1;           // valor del flag [0x45] al crear (ruta refcount)
+export function setOsemNameOff(v) { OSEM_NAME_OFF = Number(v) & 0x3f; }
+export function setOsemFlagMode(v) { OSEM_FLAG = v ? 1 : 0; }
+export function osemAddrOf(id) { const m = osemMeta.get(Number(id)); return m ? m.addr : null; }
+export function simReclaimInject(bytes) {
+    if (!uafArmed || !z128Free) return false;   // sin UAF armado no hay bloque
+    z128Inject = new Uint8Array(0x70); z128Inject.set(bytes.subarray(0, 0x70));
+    z128Free = false; z128Owner = "inject";
+    return true;
+}
+function write64Bytes(b, off, v) {
+    let x = BigInt(v);
+    for (let i = 0; i < 8; ++i) { b[off + i] = Number(x & 0xffn); x >>= 8n; }
+}
+function read64Bytes(b, off) {
+    let x = 0n;
+    for (let i = 7; i >= 0; --i) x = (x << 8n) | BigInt(b[off + i]);
+    return x;
+}
+function dec32At(addr, tag) {
+    addr = BigInt(addr);
+    for (const [base, st] of osemHeap) {          // ¿dentro de un osem?
+        if (addr >= base && addr < base + 0x60n) {
+            const off = Number(addr - base);
+            let v = (st.bytes[off] | (st.bytes[off + 1] << 8)
+                | (st.bytes[off + 2] << 16) | (st.bytes[off + 3] << 24)) >>> 0;
+            v = (v - 1) >>> 0;
+            st.bytes[off] = v & 255; st.bytes[off + 1] = (v >>> 8) & 255;
+            st.bytes[off + 2] = (v >>> 16) & 255; st.bytes[off + 3] = (v >>> 24) & 255;
+            out.conv.push(tag + "-REFCNT osem id=" + st.id + " @" + off.toString(16)
+                + " -> " + v + (off === 0x54 ? " *** DEC EN REFCOUNT (paste §4) ***" : ""));
+            return;
+        }
+    }
+    if (addr >= ANON_A && addr < ANON_MTX + 0x10000n) {
+        out.conv.push(tag + "-ANON @0x" + addr.toString(16) + " (struct kernel ajeno)");
+        return;
+    }
+    out.panic = "KERNEL PANIC: " + tag + " @0x" + addr.toString(16)
+        + " apunta a memoria NO mapeada (nodo colgante con contenido basura)";
+    out.conv.push("PANIC " + tag);
+}
+function wakerApply() {
+    const bytes = z128Owner === "inject" ? z128Inject
+        : (z128Owner === "osem" ? osemHeap.get(z128Addr)?.bytes : z128Stale);
+    if (!bytes) { out.conv.push("WAKER: bloque sin contenido (stale vacio)"); return; }
+    out.conv.push("WAKER sobre nodo @0x" + z128Addr.toString(16)
+        + " owner=" + z128Owner);
+    // 1) write32 [node+0x20], eax (estado de completado; modelo 0)
+    for (let i = 0; i < 4; ++i) bytes[0x20 + i] = 0;
+    out.conv.push("W-WRITE32 [node+0x20] <- eax(0)");
+    // 2) mtx_lock([node+0x10] + 0x18)
+    const mtx = read64Bytes(bytes, 0x10);
+    if (mtx === 0n || !(mtx >= ANON_A && mtx < ANON_MTX + 0x10000n)) {
+        out.panic = "KERNEL PANIC: mtx_lock @0x" + mtx.toString(16)
+            + " (campo [node+0x10] del bloque reclaimado no mapeado)";
+        out.conv.push("PANIC mtx_lock");
+    } else out.conv.push("W-MTXLOCK ok @0x" + mtx.toString(16));
+    // 3) dec dword [[node+0]]  (sin null-check en el waker real)
+    const t1 = read64Bytes(bytes, 0x00);
+    if (t1 === 0n) { out.panic = "KERNEL PANIC: dec1 [NULL] (campo [node+0] a cero)"; out.conv.push("PANIC dec1-NULL"); }
+    else dec32At(t1, "W-DEC1");
+    // 4) dec dword [[node+8]]  (mode 0 lo deja M_ZERO -> skip)
+    const t2 = read64Bytes(bytes, 0x08);
+    if (t2 === 0n) out.conv.push("W-DEC2 skip ([node+8]==0, M_ZERO de mode 0)");
+    else dec32At(t2, "W-DEC2");
+}
 export function resetKernel() {
     aioReqs.clear(); OSEMS.clear(); pairPeer.clear();
     uafArmed = false;
+    osemHeap.clear(); osemMeta.clear(); osemAddrSeq = 0; zseq = 0;
+    z128Addr = null; z128Free = false; z128Owner = "none";
+    z128Stale = null; z128Inject = null;
 }
-export const out = { notifs: [], tcp: [], pclog: [] };
+export const out = { notifs: [], tcp: [], pclog: [], conv: [], panic: null };
 export function resetOut() {
-    out.notifs.length = out.tcp.length = out.pclog.length = 0;
+    out.notifs.length = out.tcp.length = out.pclog.length = out.conv.length = 0;
+    out.panic = null;
 }
 function kernel(rax, rdi, rsi, rdx, r10, r8, r9) {
     rax = Number(BigInt.asIntN(64, rax));
@@ -130,8 +229,14 @@ function kernel(rax, rdi, rsi, rdx, r10, r8, r9) {
                     if (rq.fd === peer) rq.woken = true;
                 if (uafArmed) {
                     uafArmed = false;
-                    if (UAF_EFFECT) for (const o of OSEMS.values())
-                        if (o.reclaimed) { o.corrupted = true; o.value = 0; }
+                    if (UAF_EFFECT) {
+                        // [conversión] primitivas del waker a nivel de bytes
+                        // (paste §1) contra el bloque liberado/reclaimado:
+                        wakerApply();
+                        // y la corruptcion observable por las sondas osem:
+                        for (const o of OSEMS.values())
+                            if (o.reclaimed) { o.corrupted = true; o.value = 0; }
+                    }
                 }
                 return BigInt(n);
             }
@@ -195,6 +300,19 @@ function kernel(rax, rdi, rsi, rdx, r10, r8, r9) {
                         const rq = aioReqs.get(M.read32(A(0) + BigInt(i * 4)));
                         if (rq) rq.dangling = true;
                     }
+                    // [conversión] el array (num*0x38; num=2 -> 0x70, zona 128)
+                    // se libera: sus bytes quedan como los dejó mode 0 (el +8
+                    // del nodo M_ZERO — paste §1). num=3/4 daría 0xA8/0xE0
+                    // (zona 256): osem_create NO podría reclamarlo.
+                    if (num === 2) {
+                        z128Addr = Z128_BASE + BigInt(zseq++ * 0x80);
+                        z128Free = true; z128Owner = "stale";
+                        z128Inject = null;
+                        z128Stale = new Uint8Array(0x70);
+                        write64Bytes(z128Stale, 0x00, ANON_A);      // req ptr stale
+                        write64Bytes(z128Stale, 0x08, 0n);          // M_ZERO (paste §1)
+                        write64Bytes(z128Stale, 0x10, ANON_MTX);    // mtx stale
+                    }
                     uafArmed = true;
                     return 0n;
                 }
@@ -209,15 +327,74 @@ function kernel(rax, rdi, rsi, rdx, r10, r8, r9) {
             for (let i = 0n; i < 32n; ++i) { const c = M.read8(np + i); if (!c) break; s += String.fromCharCode(c); }
             if (!s) return neg(22);
             const id = osemSeq++;
-            // malloc(0x60, M_osem) = 128 zone: if the waiters array is
-            // freed, the osem RECLAIMS that block (struct overlaps the node).
+            // [conversión] malloc(0x60, M_osem) = zona 128: si el array de
+            // waiters esta liberado, el osem RECLAMA ese bloque (el struct
+            // pisa el nodo colgante). Solo el PRIMERO lo toma (los demas son
+            // alocaciones inocentes fuera del bloque).
+            let addr = OSEM_ADDR_BASE + BigInt(osemAddrSeq++ * 0x80);
+            let tookFreed = false;
+            if (uafArmed && z128Free) {
+                addr = z128Addr; z128Free = false; tookFreed = true; z128Owner = "osem";
+            }
+            // struct del modelo (M_ZERO + init): head con punteros "kernel"
+            // (+0/+0x10, +8 queda a 0 = slot libre M_ZERO del paste §1),
+            // flag [0x45], refcount [0x54] (dword, paste §4), nombre strlcpy.
+            const bytes = new Uint8Array(0x60);
+            write64Bytes(bytes, 0x00, ANON_A);
+            write64Bytes(bytes, 0x08, 0n);
+            write64Bytes(bytes, 0x10, ANON_MTX);
+            bytes[0x45] = OSEM_FLAG;
+            bytes[0x54] = 2;                                 // refcount: id + ref interna
+            const ncap = Math.min(0x45 - OSEM_NAME_OFF, s.length);
+            for (let i = 0; i < ncap; ++i) bytes[OSEM_NAME_OFF + i] = s.charCodeAt(i) & 0x7f;
+            osemHeap.set(addr, { id, bytes });
+            osemMeta.set(id, { addr, tomb: false });
             OSEMS.set(id, { name: s, value: Math.max(1, Number(A(2) & 0xffffffffn)),
-                reclaimed: uafArmed, corrupted: false });
+                reclaimed: tookFreed, corrupted: false });
             return BigInt(id);
         }
         case 0x226: {                                      // osem_delete(id)
             const id = Number(BigInt.asUintN(32, A(0)));
+            const meta = osemMeta.get(id);
+            // [conversión] paste §4: osem_delete hace test [rbx+0x45],1:
+            //  - flag CLARO -> free inmediato SIN leer el refcount
+            //  - flag SET   -> dec dword [rbx+0x54]; jne return (vive);
+            //                   a 0 -> free(r14); free(rbx)
+            // Un delete sobre un osem ya liberado = DOUBLE-FREE: en kernel
+            // real toma el path UAF (corrupcion); aqui queda registrado.
+            if (meta && meta.tomb) {
+                out.conv.push("DOUBLE-FREE id=" + id
+                    + " (delete sobre osem ya liberado -> el kernel toma el path UAF)");
+                out.panic = "DOUBLE-FREE on osem id=" + id;
+                OSEMS.delete(id);
+                return 0n;
+            }
             if (!OSEMS.has(id)) return neg(22);
+            const st = osemHeap.get(meta.addr);
+            if (st && !(st.bytes[0x45] & 1)) {
+                out.conv.push("FLAG-CLEAR-FREE id=" + id
+                    + " (flag +0x45 claro -> free sin leer refcount — paste §4)");
+            } else if (st) {
+                let rc = (st.bytes[0x54] | (st.bytes[0x55] << 8)
+                    | (st.bytes[0x56] << 16) | (st.bytes[0x57] << 24)) >>> 0;
+                rc = (rc - 1) >>> 0;
+                st.bytes[0x54] = rc & 255; st.bytes[0x55] = (rc >>> 8) & 255;
+                st.bytes[0x56] = (rc >>> 16) & 255; st.bytes[0x57] = (rc >>> 24) & 255;
+                if (rc !== 0) {
+                    out.conv.push("REFCNT-DEC id=" + id + " -> " + rc + " (vive)");
+                    return 0n;
+                }
+                out.conv.push("REFCNT-ZERO-FREE id=" + id
+                    + " (refcount a 0 -> free prematuro si quedaban refs)");
+            }
+            meta.tomb = true;
+            osemHeap.delete(meta.addr);
+            // el bloque vuelve al pool libre conservando los bytes del struct
+            // (memoria liberada no se pone a cero):
+            if (z128Addr === meta.addr) {
+                z128Free = true; z128Owner = "stale"; z128Inject = null;
+                if (st) z128Stale = st.bytes;
+            }
             OSEMS.delete(id);
             return 0n;
         }
@@ -253,10 +430,19 @@ function kernel(rax, rdi, rsi, rdx, r10, r8, r9) {
                 for (let i = 0; i < 3; ++i) M.write64(dstv + BigInt(i * 8), base + BigInt(i) * 0x40n + BigInt(id));
                 return 0n;
             }
-            if (id >= 1 && id <= 0x228 && Number(BigInt.asUintN(64, rdi) >> 16n) < 0x80) {
-                const dst = A(1);
-                for (let i = 0; i < 3; ++i) M.write64(dst + BigInt(i * 8), 0xffff860000000000n + BigInt(i) * 0x40n + BigInt(id));
-                return 0n;                                 // simula leak
+            // [leakmap] paste §3: el source index es (req_id>>16)+edx usado
+            // como sesgo DENTRO de otra array -> leak legítimo de punteros
+            // kernel por slot. Elemento = 0x18 bytes: ptr1, ptr2, dword.
+            const slot = Number(BigInt.asUintN(64, rdi) >> 16n);
+            if (slot < 0x80) {
+                const nel = Math.min(Number(A(2)), 16);
+                for (let edx = 0; edx < nel; ++edx) {
+                    const e = dstv + BigInt(edx * 0x18), s = slot + edx;
+                    M.write64(e, 0xffff860000000000n + BigInt(s) * 0x100n);
+                    M.write64(e + 8n, 0xffff860000001000n + BigInt(s) * 0x40n);
+                    M.write32(e + 0x10n, (s & 0xffff) | 0x10000);
+                }
+                return 0n;                                 // leak sesgado por slot
             }
             return neg(22);
         }

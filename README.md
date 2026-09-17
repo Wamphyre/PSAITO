@@ -248,6 +248,37 @@ Every outcome is a real answer from the hardware — including the negative
 ones: a closed gate means that link of the chain is dead on that firmware,
 and no code change can revive it from the browser.
 
+### 3d. Plan B and the conversion phase (`syscensus`, `leakmap`, `osem_conv`)
+
+Three research payloads (panel-selectable, `?auto=<file>`) built around the
+BAGAGWA spec §3/§4:
+
+- **`syscensus_1320.js`** — SAR census: probes syscalls `1..0x3FF` with null
+  args (fatal numbers vetoed) and classifies RET / ANS / **CAP (ENOTCAPABLE
+  = SAR-vetoed evidence)** / ENOSYS, cross-checked against the 331 X1NON
+  13.60 stubs. Non-destructive. **This is the plan-B generator**: if AIO is
+  dead on the target firmware, the next attack surface comes from this map,
+  not from guessing. Resume after a blocking syscall with `?cenfrom=<n+1>`.
+- **`leakmap_1320.js`** — 727 slot enumerator: sweeps the 128 slots
+  (`req_id>>16 < 0x80`) with the spec-shaped call (`count` bounded
+  `[1,0x228]`, adaptive) and maps the kernel pointers each slot leaks, plus a
+  bias proof (`slot 0, count 2` element 1 must equal `slot 1`). Read-only,
+  no BAGAGWA invocation. This is the **address cartography the aimed
+  conversion needs**.
+- **`osem_conv_1320.js`** — conversion lab (paste §4), double-gated by
+  `?conv=`: `0` = DRY (gates + hypothesis table, fires nothing), `1` =
+  layout experiment (fires the UAF once and reclaims with osem names of
+  increasing length — survival + which channels move reveal where the
+  `strlcpy`'d name lands relative to the node fields the waker reads),
+  `2` = aimed conversion (aborts with the missing-prerequisites list until a
+  **binary-content zone-128 reclaim primitive** is found: ASCII names
+  cannot encode kernel pointers and `strlcpy` cuts at NUL).
+
+The full §4 chain — waker `dec` on a victim's `osem+0x54` refcount →
+premature free via `osem_delete` → double-free on the second delete — is
+**proven in the simulator** (`sim/run.mjs`, conversion-lab section) via a
+test-injected binary reclaim; on console it waits for that primitive.
+
 ### 4. Offset profiles (13.XX) — evidence audit
 
 Per-offset evidence, audited programmatically against the raw X1NON files
@@ -345,10 +376,15 @@ executes the real ROP chains and a fake ORBIS kernel implements the
 AIO/osem/727 ABI with configurable behavior (`setAioAlive`, `setUafEffect`).
 The gated chain is covered end-to-end: an AIO-alive run reaches the kernel
 verdict, an AIO-dead run closes at the gate **without firing the shot**.
+A byte-level **conversion lab** models the freed waiters block (zone 128),
+its reclaim by `osem_create` or an injected binary primitive, the waker's
+exact primitives (`dec [node+0]`, `dec [node+8]`, `mtx_lock [node+0x10]`,
+write `[node+0x20]`) and the osem flag/refcount semantics of §4 — including
+the panic model when a dangling field points at unmapped memory.
 
 ```
-npm test                          # sim/run.mjs (36 checks) + payload smoke
-node sim/run.mjs                  # bridge + chain behavior checks
+npm test                          # sim/run.mjs (61 checks) + payload smoke
+node sim/run.mjs                  # bridge + chain + conversion-lab checks
 node sim/smoke.mjs --timeout=1500 --quiet   # API-compat smoke over all payloads
 ```
 

